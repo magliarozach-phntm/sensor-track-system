@@ -1,0 +1,52 @@
+.track-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.track-arrow {
+  width: 0;
+  height: 0;
+
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-bottom: 20px solid;
+
+  transform-origin: center center;
+}
+
+.track-label {
+  margin-top: 3px;
+
+  font-size: 11px;
+  font-weight: bold;
+
+  white-space: nowrap;
+
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+
+/* ACTIVE */
+
+.track-marker.active .track-arrow {
+  color: #00ff66;
+}
+
+
+/* STALE */
+
+.track-marker.stale .track-arrow {
+  color: #ffcc00;
+}
+
+
+/* DROPPED */
+
+.track-marker.dropped .track-arrow {
+  color: #ff4444;
+}
