@@ -5,14 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.database import Base, engine, get_db
+from app.database.database import get_db
 from app.models.observation import Observation
 from app.models.track import Track
 from app.schemas.sensor import SensorObservation
 from app.services.track_status import get_track_status
 from app.services.web_socket_manager import manager
 
-Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 app.add_middleware(

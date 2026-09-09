@@ -49,3 +49,9 @@ class Track(Base):
     
     last_seen: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False)
+    
+    classification: Mapped[str] = mapped_column(
+    String(30),
+    nullable=False,
+    server_default="UNKNOWN"
+)
