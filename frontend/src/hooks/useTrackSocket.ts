@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import type { TrackUpdate } from "../types/trackUpdate";
 
+import { WS_BASE_URL } from "../config";
 
 export function useTrackSocket(
   onTrackUpdate: (track: TrackUpdate) => void
@@ -10,8 +11,8 @@ export function useTrackSocket(
   useEffect(() => {
 
     const ws = new WebSocket(
-      "ws://127.0.0.1:8000/ws/tracks"
-    );
+      `${WS_BASE_URL}/ws/tracks`
+      );
 
 
     ws.onmessage = (event) => {

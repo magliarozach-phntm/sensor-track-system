@@ -1,11 +1,22 @@
 import math
+import os
 import random
 import time
 from datetime import datetime, timezone
 
 import requests
+from dotenv import load_dotenv
 
-API_URL = 'http://127.0.0.1:8000/observations'
+load_dotenv()
+
+API_BASE_URL = os.getenv(
+    "SENSOR_API_URL",
+    "http://127.0.0.1:8000"
+)
+
+OBSERVATION_URL = (
+    f"{API_BASE_URL}/observations"
+)
 
 outages = {}
 
@@ -130,17 +141,17 @@ def terminate_track(track_id):
     
     
 while True:
-    
+
     if random.random() < 0.01:
-                spawn_track()
-    
+        spawn_track()
+
     for track_id, track in list(tracks.items()):
 
         update_track(track)
-        
+
         if len(tracks) > 3 and random.random() < 0.005:
-                    terminate_track(track_id)
-                    continue
+            terminate_track(track_id)
+            continue
 
         # Track currently in an outage
         if track_id in outages:
@@ -168,7 +179,9 @@ while True:
 
         # Normal single-report dropout
         if random.random() < 0.05:
-            print(f"{track_id} observation dropped")
+            print(
+                f"{track_id} observation dropped"
+            )
             continue
 
         observation = create_observation(
@@ -177,8 +190,9 @@ while True:
         )
 
         response = requests.post(
-            API_URL,
-            json=observation
+            OBSERVATION_URL,
+            json=observation,
+            timeout=5
         )
 
         print(
@@ -187,10 +201,6 @@ while True:
             observation["latitude"],
             observation["longitude"]
         )
-
-        
-            
-        
 
     time.sleep(2)
 
