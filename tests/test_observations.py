@@ -170,7 +170,8 @@ def test_second_observation_updates_track(
 
 
 def test_get_track_observation_history(
-    client
+    client,
+    db_session
 ):
     base_time = datetime.now(
         timezone.utc
@@ -224,8 +225,47 @@ def test_get_track_observation_history(
         == system_track_id
     )
 
+    print(
+        "\nFIRST:",
+        first_response.json()
+    )
+
+    print(
+        "SECOND:",
+        second_response.json()
+    )
+
+    stored_observations = db_session.scalars(
+        select(Observation)
+        .where(
+            Observation.track_id
+            == system_track_id
+        )
+        .order_by(Observation.timestamp)
+    ).all()
+
+    print(
+        "STORED:",
+        [
+            (
+                obs.id,
+                obs.source_track_id,
+                obs.track_id,
+                obs.altitude,
+            )
+            for obs in stored_observations
+        ]
+    )
+
+    assert len(stored_observations) == 2
+
     response = client.get(
         f"/observations/{system_track_id}"
+    )
+
+    print(
+        "GET RESPONSE:",
+        response.json()
     )
 
     assert response.status_code == 200

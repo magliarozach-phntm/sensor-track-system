@@ -1,4 +1,5 @@
 import math
+from dataclasses import dataclass
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -17,7 +18,6 @@ MAX_SPEED_DIFFERENCE = 100
 MAX_HEADING_DIFFERENCE = 60
 
 BASE_DISTANCE_GATE_M = 1000
-
 
 def haversine_distance_m(
     lat1: float,
@@ -66,6 +66,16 @@ def heading_difference(
         360 - difference
     )
 
+@dataclass
+class AssociationResult:
+    track: Track
+    method: str
+    score: float | None = None
+    distance_m: float | None = None
+    altitude_difference: float | None = None
+    speed_difference: float | None = None
+    heading_difference: float | None = None
+
 
 def find_source_track(
     observation: SensorObservation,
@@ -105,23 +115,24 @@ def find_source_track(
 def find_correlated_track(
     observation: SensorObservation,
     db: Session,
-) -> Track | None:
+) -> AssociationResult | None:
 
-    # First preserve continuity from the
-    # same sensor/source-track pair.
     source_track = find_source_track(
         observation,
         db
     )
 
     if source_track is not None:
-        return source_track
+        return AssociationResult(
+            track=source_track,
+            method="SOURCE_CONTINUITY",
+        )
 
     candidates = db.scalars(
         select(Track)
     ).all()
 
-    best_track = None
+    best_result = None
     best_score = float("inf")
 
     observation_time = ensure_utc(
@@ -141,13 +152,13 @@ def find_correlated_track(
 
         if time_difference < 0:
             continue
-        
+
         if (
             time_difference
             > ASSOCIATION_WINDOW.total_seconds()
         ):
             continue
-        
+
         predicted_latitude, predicted_longitude = (
             predict_position(
                 latitude=track.latitude,
@@ -198,8 +209,6 @@ def find_correlated_track(
             predicted_longitude,
         )
 
-        # Allow the distance gate to expand
-        # based on target speed and time.
         max_speed_knots = max(
             observation.speed,
             track.speed
@@ -234,6 +243,15 @@ def find_correlated_track(
 
         if score < best_score:
             best_score = score
-            best_track = track
 
-    return best_track
+            best_result = AssociationResult(
+                track=track,
+                method="CORRELATION",
+                score=score,
+                distance_m=distance,
+                altitude_difference=altitude_difference,
+                speed_difference=speed_difference,
+                heading_difference=heading_delta,
+            )
+
+    return best_result

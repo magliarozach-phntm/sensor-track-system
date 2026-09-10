@@ -31,17 +31,15 @@ async def create_observation(
 ):
     # Try to associate the incoming sensor report
     # with an existing system-owned track.
-    associated_track = find_correlated_track(
+    association = find_correlated_track(
         observation,
         db
     )
 
-    if associated_track is not None:
-        track = associated_track
+    if association is not None:
+        track = association.track
         system_track_id = track.track_id
 
-        # Update current system track state
-        # with the latest observation.
         track.sensor_id = observation.sensor_id
         track.latitude = observation.latitude
         track.longitude = observation.longitude
@@ -51,8 +49,6 @@ async def create_observation(
         track.last_seen = observation.timestamp
 
     else:
-        # No plausible existing track was found,
-        # so create a new system-owned identity.
         system_track_id = generate_track_id()
 
         track = Track(
@@ -67,6 +63,15 @@ async def create_observation(
         )
 
         db.add(track)
+
+
+    # Association metadata
+    if association is not None:
+        association_method = association.method
+        association_score = association.score
+    else:
+        association_method = "NEW_TRACK"
+        association_score = None
 
     # Preserve both identities:
     # source_track_id = sensor identity
@@ -97,18 +102,24 @@ async def create_observation(
     await manager.broadcast({
         "event": "track_updated",
         "observation_id": db_observation.id,
+
         "track_id": track.track_id,
         "source_track_id": observation.source_track_id,
         "sensor_id": track.sensor_id,
+
         "latitude": track.latitude,
         "longitude": track.longitude,
         "altitude": track.altitude,
         "heading": track.heading,
         "speed": track.speed,
+
         "status": status,
         "last_seen": track.last_seen.isoformat(),
-    })
 
+        "association_method": association_method,
+        "association_score": association_score,
+    })
+    
     return {
         "message": (
             "Observation stored and "
@@ -117,29 +128,44 @@ async def create_observation(
         "id": db_observation.id,
         "track_id": track.track_id,
         "source_track_id": observation.source_track_id,
+        "association_method": association_method,
+        "association_score": association_score,
     }
 
 
 @router.get('/{track_id}')
 def get_observations(
     track_id: str,
-    limit: int = 100, 
+    limit: int = 100,
     db: Session = Depends(get_db)
 ):
     stmt = (
         select(Observation)
-        .where(Observation.track_id == track_id)
-        .order_by(Observation.timestamp.desc())
+        .where(
+            Observation.track_id == track_id
+        )
+        .order_by(
+            Observation.timestamp.desc()
+        )
         .limit(limit)
     )
-    
-    observations = db.scalars(stmt).all()
-    
+
+    observations = db.scalars(
+        stmt
+    ).all()
+
     if not observations:
-        raise HTTPException(status_code=404, 
-                            detail=f"No observations found for track_id: {track_id}")
-    
-    return list(reversed(observations))
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No observations found for "
+                f"track_id: {track_id}"
+            )
+        )
+
+    return list(
+        reversed(observations)
+    )
 
 @router.get('')
 def get_all_observations(db: Session = Depends(get_db)):

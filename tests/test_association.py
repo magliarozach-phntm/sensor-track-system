@@ -86,9 +86,12 @@ def test_prediction_selects_correct_moving_track(
     assert matched_track is not None
 
     assert (
-        matched_track.track_id
+        matched_track.track.track_id
         == "SYS-CORRECT"
     )
+    assert matched_track.method == "CORRELATION"
+    assert matched_track.score is not None
+    assert matched_track.distance_m is not None
 
 def test_heading_difference_wraparound():
     difference = heading_difference(
