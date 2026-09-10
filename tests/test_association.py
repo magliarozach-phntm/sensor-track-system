@@ -1,10 +1,94 @@
 from datetime import datetime, timedelta, timezone
 
-from app.services.association import (
-    haversine_distance_m,
-    heading_difference,
-)
+from app.models.track import Track
+from app.schemas.sensor import SensorObservation
+from app.services.association import find_correlated_track, haversine_distance_m, heading_difference
+from app.services.prediction import predict_position
 
+
+def test_prediction_selects_correct_moving_track(
+    db_session
+):
+    now = datetime.now(timezone.utc)
+
+    track_time = (
+        now - timedelta(seconds=10)
+    )
+
+    # Candidate A:
+    # moving east at 200 knots.
+    # We will place the new observation exactly
+    # where this track should be after 10 seconds.
+    track_a_lat = 34.92
+    track_a_lon = -80.93
+
+    predicted_lat, predicted_lon = (
+        predict_position(
+            latitude=track_a_lat,
+            longitude=track_a_lon,
+            heading=90,
+            speed=200,
+            seconds=10,
+        )
+    )
+
+    track_a = Track(
+        track_id="SYS-CORRECT",
+        sensor_id="RADAR-01",
+        latitude=track_a_lat,
+        longitude=track_a_lon,
+        altitude=12000,
+        heading=90,
+        speed=200,
+        last_seen=track_time,
+        classification="UNKNOWN",
+    )
+
+    # Candidate B:
+    # its OLD position is closer to the incoming
+    # observation, but if projected forward using
+    # its motion, it should move past it.
+    track_b = Track(
+        track_id="SYS-WRONG",
+        sensor_id="RADAR-02",
+        latitude=predicted_lat,
+        longitude=predicted_lon - 0.002,
+        altitude=12000,
+        heading=90,
+        speed=200,
+        last_seen=track_time,
+        classification="UNKNOWN",
+    )
+
+    db_session.add_all([
+        track_a,
+        track_b,
+    ])
+
+    db_session.commit()
+
+    observation = SensorObservation(
+        sensor_id="EO-99",
+        source_track_id="EO-NEW-001",
+        latitude=predicted_lat,
+        longitude=predicted_lon,
+        altitude=12000,
+        heading=90,
+        speed=200,
+        timestamp=now,
+    )
+
+    matched_track = find_correlated_track(
+        observation,
+        db_session,
+    )
+
+    assert matched_track is not None
+
+    assert (
+        matched_track.track_id
+        == "SYS-CORRECT"
+    )
 
 def test_heading_difference_wraparound():
     difference = heading_difference(

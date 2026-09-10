@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.observation import Observation
 from app.models.track import Track
 from app.schemas.sensor import SensorObservation
+from app.services.prediction import predict_position
 from app.services.time_utils import ensure_utc
 
 ASSOCIATION_WINDOW = timedelta(seconds=20)
@@ -133,18 +134,29 @@ def find_correlated_track(
             track.last_seen
         )
 
-        time_difference = abs(
-            (
-                observation_time
-                - track_time
-            ).total_seconds()
-        )
+        time_difference = (
+            observation_time
+            - track_time
+        ).total_seconds()
 
+        if time_difference < 0:
+            continue
+        
         if (
             time_difference
             > ASSOCIATION_WINDOW.total_seconds()
         ):
             continue
+        
+        predicted_latitude, predicted_longitude = (
+            predict_position(
+                latitude=track.latitude,
+                longitude=track.longitude,
+                heading=track.heading,
+                speed=track.speed,
+                seconds=time_difference,
+            )
+        )
 
         altitude_difference = abs(
             observation.altitude
@@ -182,8 +194,8 @@ def find_correlated_track(
         distance = haversine_distance_m(
             observation.latitude,
             observation.longitude,
-            track.latitude,
-            track.longitude,
+            predicted_latitude,
+            predicted_longitude,
         )
 
         # Allow the distance gate to expand
