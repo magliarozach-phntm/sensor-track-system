@@ -1,10 +1,38 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.models.track import Track
 from app.schemas.sensor import SensorObservation
-from app.services.association import find_correlated_track, haversine_distance_m, heading_difference
+from app.services.association import (
+    association_confidence,
+    find_correlated_track,
+    haversine_distance_m,
+    heading_difference,
+)
 from app.services.prediction import predict_position
 
+
+@pytest.mark.parametrize(
+    "score, expected",
+    [
+        (0.0, "HIGH CONFIDENCE"),
+        (0.5, "HIGH CONFIDENCE"),
+        (0.51, "MEDIUM CONFIDENCE"),
+        (0.99, "MEDIUM CONFIDENCE"),
+        (1.0, "LOW CONFIDENCE"),
+        (2.0, "LOW CONFIDENCE"),
+    ]
+)
+def test_association_confidence(
+    score,
+    expected
+):
+    result = association_confidence(
+        score
+    )
+
+    assert result == expected
 
 def test_prediction_selects_correct_moving_track(
     db_session
@@ -169,6 +197,21 @@ def test_two_sensors_correlate_to_same_system_track(
     assert (
         radar_response.json()["track_id"]
         == eo_response.json()["track_id"]
+    )
+
+    assert (
+        eo_response.json()["association_method"]
+        == "CORRELATION"
+    )
+
+    assert (
+        eo_response.json()["association_confidence"]
+        == "HIGH CONFIDENCE"
+    )
+
+    assert (
+        eo_response.json()["association_score"]
+        is not None
     )
     
 def test_distant_observations_create_separate_tracks(

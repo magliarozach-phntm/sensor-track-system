@@ -142,6 +142,16 @@ def test_second_observation_updates_track(
         second_response.json()["track_id"]
         == system_track_id
     )
+    
+    assert (
+        second_response.json()["association_method"]
+        == "SOURCE_CONTINUITY"
+    )
+
+    assert (
+        second_response.json()["association_score"]
+        is None
+    )
 
     track = db_session.scalar(
         select(Track)
@@ -355,3 +365,6 @@ def test_missing_observation_history_returns_404(
         == "No observations found for "
         "track_id: SYS-NOT-REAL"
     )
+    
+
+    

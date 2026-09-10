@@ -69,9 +69,11 @@ async def create_observation(
     if association is not None:
         association_method = association.method
         association_score = association.score
+        confidence = association.confidence
     else:
         association_method = "NEW_TRACK"
         association_score = None
+        confidence = None
 
     # Preserve both identities:
     # source_track_id = sensor identity
@@ -118,6 +120,7 @@ async def create_observation(
 
         "association_method": association_method,
         "association_score": association_score,
+        "association_confidence": confidence
     })
     
     return {
@@ -130,6 +133,7 @@ async def create_observation(
         "source_track_id": observation.source_track_id,
         "association_method": association_method,
         "association_score": association_score,
+        "association_confidence": confidence
     }
 
 

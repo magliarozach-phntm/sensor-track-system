@@ -71,6 +71,7 @@ class AssociationResult:
     track: Track
     method: str
     score: float | None = None
+    confidence: str | None = None
     distance_m: float | None = None
     altitude_difference: float | None = None
     speed_difference: float | None = None
@@ -248,6 +249,7 @@ def find_correlated_track(
                 track=track,
                 method="CORRELATION",
                 score=score,
+                confidence=association_confidence(score),
                 distance_m=distance,
                 altitude_difference=altitude_difference,
                 speed_difference=speed_difference,
@@ -255,3 +257,18 @@ def find_correlated_track(
             )
 
     return best_result
+
+def association_confidence(
+    score: float
+) -> str:
+    
+    LOW = "LOW CONFIDENCE"
+    MEDIUM = "MEDIUM CONFIDENCE"
+    HIGH = "HIGH CONFIDENCE"
+    
+    if score >= 1:
+        return LOW
+    elif score > 0.5:
+        return MEDIUM
+    else:
+        return HIGH
