@@ -1,5 +1,4 @@
 import pytest
-
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -11,7 +10,6 @@ from app.main import app
 # Make sure SQLAlchemy knows about all models.
 from app.models.observation import Observation
 from app.models.track import Track
-
 
 TEST_DATABASE_URL = "sqlite://"
 

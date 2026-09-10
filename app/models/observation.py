@@ -13,6 +13,10 @@ class Observation(Base):
     
     sensor_id: Mapped[str] = mapped_column(String(50), nullable=False)
     track_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_track_id: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False
+    )
     
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)

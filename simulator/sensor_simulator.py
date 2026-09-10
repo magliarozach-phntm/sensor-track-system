@@ -98,7 +98,7 @@ def update_track(track, seconds=2):
 def create_observation(track_id, track):
     return {
         'sensor_id': track['sensor_id'],
-        'track_id': track_id,
+        'source_track_id': track_id,
         'latitude': track['latitude'],
         'longitude': track['longitude'],
         'altitude': track['altitude'],

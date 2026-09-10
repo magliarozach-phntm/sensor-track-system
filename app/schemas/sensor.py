@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class SensorObservation(BaseModel):
     sensor_id: str
-    track_id: str
+    source_track_id: str
     
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
