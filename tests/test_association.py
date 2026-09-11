@@ -304,3 +304,74 @@ def test_old_track_is_not_correlated(
         old_response.json()["track_id"]
         != new_response.json()["track_id"]
     )
+    
+def test_ambiguous_candidates_choose_best_overall_match(
+    db_session
+):
+    now = datetime.now(timezone.utc)
+
+    # Candidate A is spatially perfect,
+    # but its kinematics are a poor match.
+    candidate_a = Track(
+        track_id="SYS-CLOSE-BUT-WRONG",
+        sensor_id="RADAR-01",
+        latitude=34.9200,
+        longitude=-80.9300,
+        altitude=13500,
+        heading=140,
+        speed=260,
+        last_seen=now,
+        classification="UNKNOWN",
+    )
+
+    # Candidate B is slightly farther away,
+    # but altitude, heading, and speed
+    # match the incoming observation closely.
+    candidate_b = Track(
+        track_id="SYS-BEST-MATCH",
+        sensor_id="RADAR-02",
+        latitude=34.9208,
+        longitude=-80.9308,
+        altitude=12100,
+        heading=92,
+        speed=185,
+        last_seen=now,
+        classification="UNKNOWN",
+    )
+
+    db_session.add_all([
+        candidate_a,
+        candidate_b,
+    ])
+
+    db_session.commit()
+
+    observation = SensorObservation(
+        sensor_id="EO-99",
+        source_track_id="EO-AMBIGUOUS-001",
+        latitude=34.9200,
+        longitude=-80.9300,
+        altitude=12000,
+        heading=90,
+        speed=180,
+        timestamp=now,
+    )
+
+    result = find_correlated_track(
+        observation,
+        db_session,
+    )
+
+    assert result is not None
+
+    assert (
+        result.track.track_id
+        == "SYS-BEST-MATCH"
+    )
+
+    assert result.method == "CORRELATION"
+
+    assert result.score is not None
+
+    assert result.confidence == \
+        "HIGH CONFIDENCE"
