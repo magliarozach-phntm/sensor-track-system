@@ -92,6 +92,7 @@ def get_all_track_statuses(
 
         results.append({
             "track_id": track.track_id,
+            "quality": track.quality,
             "sensor_id": track.sensor_id,
             "latitude": track.latitude,
             "longitude": track.longitude,

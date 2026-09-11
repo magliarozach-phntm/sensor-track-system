@@ -82,6 +82,22 @@ function TrackPanel({
 
       </div>
 
+      <div className="data-section">
+
+        <span className="section-title">
+          TRACK QUALITY
+        </span>
+
+        <div className="data-row">
+          <span>Quality</span>
+
+          <strong>
+            {track.quality.toFixed(2)}
+          </strong>
+        </div>
+
+      </div>
+
 
       <div className="data-section">
 

@@ -11,6 +11,8 @@ from app.schemas.sensor import SensorObservation
 from app.services.association import (
     find_correlated_track,
 )
+from app.services.track_quality import calculate_track_quality
+from app.services.track_sources import record_track_source
 from app.services.track_status import get_track_status
 from app.services.web_socket_manager import manager
 
@@ -39,7 +41,11 @@ async def create_observation(
     if association is not None:
         track = association.track
         system_track_id = track.track_id
-
+        track.quality = calculate_track_quality(
+            current_quality=track.quality,
+            association_method=association.method,
+            association_score=association.score
+        )
         track.sensor_id = observation.sensor_id
         track.latitude = observation.latitude
         track.longitude = observation.longitude
@@ -53,6 +59,7 @@ async def create_observation(
 
         track = Track(
             track_id=system_track_id,
+            quality=0.50,
             sensor_id=observation.sensor_id,
             latitude=observation.latitude,
             longitude=observation.longitude,
@@ -92,6 +99,14 @@ async def create_observation(
 
     db.add(db_observation)
 
+    record_track_source(
+        db=db,
+        track_id=system_track_id,
+        sensor_id=observation.sensor_id,
+        source_track_id=observation.source_track_id,
+        timestamp=observation.timestamp,
+    )
+    
     db.commit()
 
     db.refresh(db_observation)
@@ -104,11 +119,11 @@ async def create_observation(
     await manager.broadcast({
         "event": "track_updated",
         "observation_id": db_observation.id,
-
+        
         "track_id": track.track_id,
         "source_track_id": observation.source_track_id,
         "sensor_id": track.sensor_id,
-
+        "quality": track.quality,
         "latitude": track.latitude,
         "longitude": track.longitude,
         "altitude": track.altitude,
@@ -130,6 +145,7 @@ async def create_observation(
         ),
         "id": db_observation.id,
         "track_id": track.track_id,
+        "quality": track.quality,
         "source_track_id": observation.source_track_id,
         "association_method": association_method,
         "association_score": association_score,

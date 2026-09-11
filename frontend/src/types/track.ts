@@ -1,6 +1,7 @@
 export interface Track {
     track_id: string;
     sensor_id: string;
+    quality: number;
     latitude: number;
     longitude: number;
     altitude: number;

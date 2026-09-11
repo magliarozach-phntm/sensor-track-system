@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String
+from sqlalchemy import DateTime, Float, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.database import Base
+
 
 class Track(Base):
     __tablename__ = "tracks"
@@ -51,7 +52,14 @@ class Track(Base):
         DateTime(timezone=True), nullable=False)
     
     classification: Mapped[str] = mapped_column(
-    String(30),
-    nullable=False,
-    server_default="UNKNOWN"
-)
+        String(30),
+        nullable=False,
+        server_default="UNKNOWN"
+    )
+    
+    quality: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.50,
+        server_default=text("0.5"),
+    )
