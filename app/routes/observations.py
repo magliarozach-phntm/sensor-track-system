@@ -11,6 +11,7 @@ from app.schemas.sensor import SensorObservation
 from app.services.association import (
     find_correlated_track,
 )
+from app.services.state_estimation import EstimatedState, estimate_track_state
 from app.services.track_quality import calculate_track_quality
 from app.services.track_sources import record_track_source
 from app.services.track_status import get_track_status
@@ -46,6 +47,28 @@ async def create_observation(
             association_method=association.method,
             association_score=association.score
         )
+        
+        previous_state = EstimatedState(
+            latitude=track.latitude,
+            longitude=track.longitude,
+            altitude=track.altitude,
+            heading=track.heading,
+            speed=track.speed,
+        )
+        
+        measurement = EstimatedState(
+            latitude=observation.latitude,
+            longitude=observation.longitude,
+            altitude=observation.altitude,
+            heading=observation.heading,
+            speed=observation.speed
+        )
+        
+        estimated_state = estimate_track_state(
+            previous_state=previous_state,
+            measurement=measurement
+        )
+        
         track.sensor_id = observation.sensor_id
         track.latitude = observation.latitude
         track.longitude = observation.longitude
@@ -70,6 +93,7 @@ async def create_observation(
         )
 
         db.add(track)
+        db.flush()
 
 
     # Association metadata
