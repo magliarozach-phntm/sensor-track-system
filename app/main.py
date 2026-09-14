@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.logging_config import configure_logging
+from app.routes.health import router as health_router
 from app.routes.observations import router as observations_router
 from app.routes.tracks import router as tracks_router
 from app.routes.websocket import router as websocket_router
@@ -26,7 +27,7 @@ app.add_middleware(
 app.include_router(observations_router)
 app.include_router(tracks_router)
 app.include_router(websocket_router)
-
+app.include_router(health_router)
 
 @app.get("/")
 def root():

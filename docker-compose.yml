@@ -1,12 +1,11 @@
 services:
-
   db:
     image: postgres:17-alpine
 
     environment:
-      POSTGRES_USER: ${DB_USER}
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_DB: sensor_track_db
 
     ports:
       - "5433:5432"
@@ -18,7 +17,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${DB_USER} -d ${DB_NAME}"
+          "pg_isready -U postgres -d sensor_track_db"
         ]
       interval: 5s
       timeout: 5s
@@ -26,7 +25,9 @@ services:
 
 
   backend:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
 
     ports:
       - "8000:8000"
@@ -42,16 +43,31 @@ services:
       db:
         condition: service_healthy
 
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
 
     ports:
       - "8080:80"
 
     depends_on:
-      - backend
+      backend:
+        condition: service_started
 
 
 volumes:

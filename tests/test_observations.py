@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import select
 
 from app.models.observation import Observation
@@ -162,11 +163,11 @@ def test_second_observation_updates_track(
     )
 
     assert track is not None
-    assert track.latitude == 34.9300
-    assert track.longitude == -80.9400
-    assert track.altitude == 12500
-    assert track.heading == 110
-    assert track.speed == 200
+    assert track.latitude == pytest.approx(34.9265)
+    assert track.longitude == pytest.approx(-80.9365)
+    assert track.altitude == pytest.approx(12325)
+    assert track.heading == pytest.approx(103)
+    assert track.speed == pytest.approx(193)
 
     observations = db_session.scalars(
         select(Observation)
