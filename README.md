@@ -1,5 +1,7 @@
 # Sensor Track System
 
+![CI](https://github.com/magliarozach-phntm/sensor-track-system/actions/workflows/ci.yml/badge.svg)
+
 > **A portfolio implementation of a real-time multi-sensor tracking pipeline inspired by operational ISR workflows.**
 
 Tracking, correlation, logging, and visualization system built with FastAPI, PostgreSQL, React, TypeScript, Docker, and WebSockets.
