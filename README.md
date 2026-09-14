@@ -1,6 +1,8 @@
 # Sensor Track System
 
-A real-time multi-sensor tracking, correlation, logging, and visualization system built with FastAPI, PostgreSQL, React, TypeScript, Docker, and WebSockets.
+> **A portfolio implementation of a real-time multi-sensor tracking pipeline inspired by operational ISR workflows.**
+
+Tracking, correlation, logging, and visualization system built with FastAPI, PostgreSQL, React, TypeScript, Docker, and WebSockets.
 
 The project simulates a limited aerospace operational picture using synthetic radar and electro-optical sensor reports. Incoming observations are validated, correlated against system-owned tracks, persisted to PostgreSQL, and distributed to a live operator dashboard.
 
@@ -12,7 +14,33 @@ The project is intentionally focused on explainable tracking logic and software 
 
 <img width="1890" height="877" alt="image" src="https://github.com/user-attachments/assets/a5d15e4d-d566-47a4-8b6f-c23eac63b07c" />
 
+## Quick Demo
 
+1. Start the application:
+
+   ```powershell
+   docker compose up -d --build
+
+2. Start the synthetic simulator:
+
+   ```powershell
+   python simulator/sensor_simulator.py
+
+3. Open http://127.0.0.1:8080
+
+4. Watch for:
+
+       - system-owned SYS-* tracks being created
+       - live track movement and heading changes
+       - track quality increasing as evidence accumulates
+       - ACTIVE, STALE, and DROPPED transitions
+       - multi-sensor correlation and reacquisition
+       - historical altitude and speed charts
+
+5. View backend tracking decisions:
+   
+   ```powershell
+   docker compose logs backend -f
 
 ## Overview
 
