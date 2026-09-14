@@ -1,21 +1,19 @@
 # Sensor Track System Architecture
 
-## 1. Purpose
+## 1. Purpose and Scope
 
-The Sensor Track System is a real-time tracking platform designed to ingest sensor observations, maintain current track state, preserve historical observations, and distribute updates to a live operator dashboard.
+The Sensor Track System is a real-time multi-sensor tracking application that ingests synthetic sensor observations, associates them with system-owned tracks, maintains an estimated current track state, preserves observation history and source provenance, and streams updates to a React dashboard.
 
 The architecture intentionally separates:
 
 ```text
-sensor reports
-current track state
-historical state
-business logic
-transport
-presentation
+sensor measurement
+system identity
+system state
+source provenance
 ```
 
-This separation allows each part of the system to evolve independently as the project grows toward more advanced tracking, correlation, and sensor-fusion capabilities.
+This document describes the implemented architecture rather than theoretical future sensor-fusion capabilities.
 
 ---
 
@@ -25,1371 +23,910 @@ This separation allows each part of the system to evolve independently as the pr
 flowchart LR
     SIM[Sensor Simulator]
 
-    API[FastAPI Application]
-
-    ROUTES[API Routers]
-
-    SERVICES[Domain Services]
-
-    DB[(PostgreSQL)]
-
-    WS[WebSocket Manager]
-
-    FE[React Frontend]
-
-    SIM -->|HTTP POST| API
-
-    API --> ROUTES
-    ROUTES --> SERVICES
-    ROUTES --> DB
-
-    DB --> ROUTES
-
-    ROUTES --> WS
-    WS -->|Track Updates| FE
-
-    FE -->|REST Queries| API
-```
-
-The system consists of four major runtime components:
-
-```text
-Sensor Simulator
-       ↓
-FastAPI Backend
-       ↓
-PostgreSQL Database
-       ↓
-React Operator Dashboard
-```
-
-Docker Compose provides the local runtime environment and networking between services.
-
----
-
-# 3. Backend Architecture
-
-The backend uses FastAPI as the HTTP and WebSocket application layer.
-
-Application responsibilities are divided across:
-
-```text
-app/
-├── config.py
-├── main.py
-├── database/
-├── models/
-├── routes/
-├── schemas/
-└── services/
-```
-
-Each layer has a distinct responsibility.
-
----
-
-## 3.1 Application Entry Point
-
-`app/main.py` is responsible for assembling the FastAPI application.
-
-It handles:
-
-```text
-FastAPI initialization
-CORS middleware
-router registration
-application-level configuration
-root health-style endpoint
-```
-
-It does not contain observation-processing or track-management business logic.
-
-Conceptually:
-
-```text
-main.py
-   │
-   ├── observations router
-   ├── tracks router
-   └── websocket router
-```
-
-This keeps the application entry point small and prevents route logic from becoming tightly coupled to application initialization.
-
----
-
-# 4. Routing Layer
-
-Routes are separated by responsibility.
-
-```text
-app/routes/
-├── observations.py
-├── tracks.py
-└── websocket.py
-```
-
-Each module defines an `APIRouter`.
-
-The route modules do not import the FastAPI application instance.
-
-Instead:
-
-```text
-route module
-    ↓
-creates APIRouter
-
-main.py
-    ↓
-include_router()
-```
-
-This avoids circular dependencies between the application entry point and route modules.
-
----
-
-## 4.1 Observation Routes
-
-The observation router handles historical sensor reports.
-
-Primary responsibilities include:
-
-```text
-accept observations
-validate input
-persist observation history
-create/update track state
-broadcast updates
-retrieve history
-retrieve latest observations
-```
-
-The central write path is:
-
-```text
-POST /observations
-```
-
----
-
-## 4.2 Track Routes
-
-The track router provides access to current track state.
-
-Responsibilities include:
-
-```text
-retrieve all current tracks
-retrieve an individual track
-search/filter tracks
-derive track status
-calculate track age
-```
-
-Track search currently supports filtering by:
-
-```text
-sensor ID
-minimum altitude
-maximum altitude
-minimum speed
-maximum speed
-```
-
-Static routes such as:
-
-```text
-/tracks/search
-/tracks/status
-```
-
-are declared before:
-
-```text
-/tracks/{track_id}
-```
-
-to prevent static route names from being interpreted as dynamic track IDs.
-
----
-
-## 4.3 WebSocket Route
-
-The WebSocket endpoint is:
-
-```text
-/ws/tracks
-```
-
-Clients connect once and remain connected while the application is active.
-
-The route delegates connection management to the shared WebSocket manager.
-
-```text
-browser
-   ↓
-/ws/tracks
-   ↓
-ConnectionManager
-```
-
-The route itself does not maintain independent connection state.
-
----
-
-# 5. Validation Layer
-
-Incoming sensor observations are validated using Pydantic.
-
-The sensor schema defines constraints including:
-
-```text
-latitude:
--90 <= latitude <= 90
-
-longitude:
--180 <= longitude <= 180
-
-heading:
-0 <= heading < 360
-
-speed:
-speed >= 0
-```
-
-Timestamp input must contain timezone information.
-
-A naive timestamp is rejected at the API boundary rather than allowing ambiguous time data to enter the system.
-
-Valid timestamps are normalized to UTC.
-
-This establishes a system rule:
-
-```text
-external timestamp
-      ↓
-validate timezone
-      ↓
-normalize UTC
-      ↓
-business logic / persistence
-```
-
----
-
-# 6. Persistence Architecture
-
-PostgreSQL is the primary runtime database.
-
-SQLAlchemy provides the ORM layer.
-
-The current data design separates two related but fundamentally different concepts:
-
-```text
-Observation
-Track
-```
-
----
-
-## 6.1 Observation Model
-
-An observation represents one sensor report at one moment in time.
-
-Example:
-
-```text
-TRK-1001
-
-12:00:00 → position A
-12:00:02 → position B
-12:00:04 → position C
-12:00:06 → position D
-```
-
-Every valid report creates a new observation row.
-
-Observation records therefore represent historical event data.
-
-They support:
-
-```text
-historical trails
-charts
-movement reconstruction
-latest-report queries
-future analytics
-```
-
-Observations are not overwritten when a track moves.
-
----
-
-## 6.2 Track Model
-
-A track represents the current known state associated with a track identifier.
-
-Example:
-
-```text
-TRK-1001
-
-sensor      RADAR-01
-position    latest position
-altitude    latest altitude
-heading     latest heading
-speed       latest speed
-last_seen   latest report time
-```
-
-There is one current Track row per unique `track_id`.
-
-When another observation arrives for an existing track, the Track record is updated.
-
-This creates a CQRS-like distinction between:
-
-```text
-historical event data
-        ↓
-Observation
-
-current state
-        ↓
-Track
-```
-
-without implementing full event sourcing.
-
----
-
-# 7. Observation Write Flow
-
-The most important backend workflow begins when the simulator or another client sends:
-
-```text
-POST /observations
-```
-
-The complete processing path is:
-
-```mermaid
-sequenceDiagram
-    participant S as Sensor Client
-    participant API as FastAPI
-    participant V as Pydantic
-    participant DB as PostgreSQL
-    participant WS as WebSocket Manager
-    participant UI as React UI
-
-    S->>API: POST /observations
-    API->>V: Validate payload
-    V-->>API: Valid SensorObservation
-
-    API->>DB: INSERT Observation
-    API->>DB: SELECT Track by track_id
-
-    alt Track exists
-        API->>DB: UPDATE Track
-    else New track
-        API->>DB: INSERT Track
+    subgraph BACKEND[FastAPI Backend]
+        VALIDATE[Observation Validation]
+        ASSOC[Association Service]
+        PREDICT[Prediction Service]
+        QUALITY[Track Quality]
+        ESTIMATE[State Estimation]
+        SOURCE[Source Provenance]
+        STATUS[Track Status]
+        WS[WebSocket Manager]
     end
 
-    API->>DB: COMMIT
+    DB[(PostgreSQL)]
+    UI[React / TypeScript Dashboard]
 
-    API->>WS: broadcast(track_updated)
-    WS-->>UI: WebSocket JSON event
+    SIM -->|POST /observations| VALIDATE
 
-    API-->>S: HTTP success response
+    VALIDATE --> ASSOC
+    ASSOC --> PREDICT
+    PREDICT --> ASSOC
+
+    ASSOC --> QUALITY
+    QUALITY --> ESTIMATE
+    ESTIMATE --> SOURCE
+
+    SOURCE --> DB
+    DB --> STATUS
+
+    STATUS --> WS
+    WS -->|track_updated| UI
+
+    UI -->|REST| BACKEND
 ```
 
-A key architecture decision is that broadcasting occurs after:
+The system follows a transactional event-processing model.
 
-```text
-db.commit()
-```
-
-This ensures connected clients are not told about state that failed to persist.
+An incoming observation is not broadcast until its associated database changes successfully commit.
 
 ---
 
-# 8. Transaction Boundary
+## 3. Identity Model
 
-The observation record and corresponding current-track update are committed together.
+A central architectural decision is separating sensor-owned identity from system-owned identity.
 
-Conceptually:
-
-```text
-BEGIN
-
-INSERT observation
-
-UPDATE track
-or
-INSERT track
-
-COMMIT
-```
-
-This prevents a state such as:
+Sensors provide:
 
 ```text
-observation persisted
-track update failed
+sensor_id
+source_track_id
 ```
 
-or the reverse from being intentionally committed as separate application operations.
-
-As the system evolves, this transaction boundary becomes increasingly important for maintaining a coherent track picture.
-
----
-
-# 9. Track Status Architecture
-
-Track status is derived rather than stored as authoritative database state.
-
-Current development states are:
+The application owns:
 
 ```text
-ACTIVE
-STALE
-DROPPED
+track_id
 ```
-
-The determination is based on:
-
-```text
-current UTC time - last_seen
-```
-
-Current development thresholds are:
-
-```text
-< 10 seconds
-    ACTIVE
-
->= 10 seconds and < 30 seconds
-    STALE
-
->= 30 seconds
-    DROPPED
-```
-
-This design avoids permanently storing status values that can become incorrect merely because time has passed.
-
-For example, if a track is stored as:
-
-```text
-ACTIVE
-```
-
-and then the sensor stops reporting, nothing would update that row to `STALE` unless another process ran.
-
-Instead, status is derived whenever needed.
-
----
-
-# 10. Time Handling
-
-UTC is the internal time standard.
-
-Incoming timestamps are normalized at the API boundary.
-
-Database-returned timestamps are normalized again before internal datetime arithmetic using:
-
-```text
-ensure_utc()
-```
-
-Track age calculations use:
-
-```text
-age_seconds()
-```
-
-This defensive layer is useful because database engines can differ in how timezone metadata is returned.
-
-For example:
-
-```text
-PostgreSQL
-→ timezone-aware datetime
-
-SQLite test database
-→ may return naive datetime
-```
-
-The application therefore treats naive internally retrieved timestamps as UTC before performing arithmetic.
-
-This creates a consistent invariant:
-
-```text
-business logic operates on UTC-aware datetimes
-```
-
----
-
-# 11. Service Layer
-
-Domain behavior that does not belong directly to HTTP transport is placed under:
-
-```text
-app/services/
-```
-
-Current examples include:
-
-```text
-track_status.py
-time_utils.py
-web_socket_manager.py
-```
-
-This separation prevents routes from becoming responsible for unrelated implementation details.
-
-The desired dependency direction is:
-
-```text
-route
-  ↓
-service
-```
-
-rather than:
-
-```text
-service
-  ↓
-FastAPI route
-```
-
-Services should remain reusable and, where possible, independent of FastAPI.
-
----
-
-# 12. WebSocket Architecture
-
-The WebSocket manager maintains the currently connected dashboard clients.
-
-Conceptually:
-
-```text
-ConnectionManager
-
-active_connections
-├── client A
-├── client B
-└── client C
-```
-
-When a persisted track changes:
-
-```text
-Observation route
-      ↓
-manager.broadcast()
-      ↓
-all connected clients
-```
-
-The event currently uses:
-
-```text
-track_updated
-```
-
-and contains the current track state.
 
 Example:
 
-```json
-{
-  "event": "track_updated",
-  "observation_id": 125,
-  "track_id": "TRK-1001",
-  "sensor_id": "RADAR-01",
-  "latitude": 34.92,
-  "longitude": -80.91,
-  "altitude": 12000,
-  "heading": 90,
-  "speed": 180,
-  "status": "ACTIVE",
-  "last_seen": "2026-09-10T12:00:00+00:00"
-}
-```
-
-The WebSocket channel handles changing live state while REST endpoints remain available for initial loading, historical data, and direct queries.
-
----
-
-# 13. REST and WebSocket Responsibilities
-
-REST and WebSockets solve different problems within the same system.
-
-REST is currently used for:
-
 ```text
-initial track load
-historical queries
-specific track lookup
-search
-filtering
-latest observation retrieval
-```
-
-WebSockets are used for:
-
-```text
-live track updates
-```
-
-The frontend startup path therefore resembles:
-
-```text
-page loads
-    ↓
-GET current track picture
-    ↓
-open WebSocket
-    ↓
-receive incremental updates
-```
-
-This avoids rebuilding the entire track picture for every sensor report.
-
----
-
-# 14. Frontend Architecture
-
-The frontend is implemented using React and TypeScript.
-
-Major responsibilities are separated into:
-
-```text
-components
-hooks
-services
-types
-configuration
-```
-
-The frontend does not communicate directly with PostgreSQL.
-
-All state enters through:
-
-```text
-REST API
-or
-WebSocket
-```
-
-This preserves the backend as the authoritative application boundary.
-
----
-
-## 14.1 REST Client
-
-Frontend REST calls are centralized under:
-
-```text
-src/services/
-```
-
-The REST base URL comes from:
-
-```text
-VITE_API_URL
-```
-
-rather than being hard-coded in source files.
-
-This allows the same frontend source to target different backend environments.
-
----
-
-## 14.2 WebSocket Client
-
-The WebSocket connection uses:
-
-```text
-VITE_WS_URL
-```
-
-The frontend hook receives `track_updated` events and updates current React state.
-
-Conceptually:
-
-```text
-WebSocket event
-      ↓
-useTrackSocket
-      ↓
-App state update
-      ↓
-React re-render
-      ↓
-marker moves
-```
-
-If the updated track is currently selected, the observation can also be appended to its visible historical trail.
-
----
-
-# 15. Frontend Track Status
-
-The frontend independently derives track status from `last_seen`.
-
-A one-second clock causes status to be recalculated even when the sensor is silent.
-
-This is necessary because:
-
-```text
-no sensor report
-      ↓
-no WebSocket event
-```
-
-but time is still passing.
-
-Without client-side aging, a marker could remain visibly `ACTIVE` forever after its final report.
-
-The frontend therefore transitions:
-
-```text
-ACTIVE
-  ↓
-STALE
-  ↓
-DROPPED
-```
-
-without requiring another backend message.
-
-The backend remains authoritative whenever track data is explicitly requested through the API.
-
----
-
-# 16. Map Architecture
-
-Leaflet provides the map layer.
-
-Each current track is rendered using a custom marker.
-
-The marker displays:
-
-```text
-track identifier
-status
-heading
-```
-
-Heading is represented by rotating the marker according to:
-
-```text
-track.heading
-```
-
-Track status affects marker presentation.
-
-Historical observation positions are rendered separately from current Track state.
-
-This distinction makes it possible to show:
-
-```text
-historical trail
+RADAR-01 / RDR-441
+EO-02    / EO-827
         ↓
-current track marker
+SYS-A1B2C3D4E5F6
 ```
 
-without confusing previous sensor reports with current state.
+`source_track_id` answers:
+
+> What identity did the reporting sensor assign?
+
+`track_id` answers:
+
+> What object does this application currently believe these observations represent?
+
+This prevents an individual sensor from becoming authoritative for system identity.
 
 ---
 
-# 17. Historical Visualization
+## 4. Persistence Model
 
-When a track is selected, the frontend requests:
+Three primary models represent different kinds of information.
 
-```text
-GET /observations/{track_id}?limit=N
-```
+### Observation
 
-The backend retrieves the most recent observations in descending order for query efficiency:
+An `Observation` is historical evidence representing exactly what a sensor reported.
 
-```text
-newest
-↓
-oldest
-```
-
-and reverses the result before returning it.
-
-The frontend therefore receives:
+Important fields include:
 
 ```text
-oldest
-↓
-newest
-```
-
-which is the natural order for:
-
-```text
-map trails
-time-series charts
-```
-
-The live current position is connected to the end of the historical trail.
-
----
-
-# 18. Simulator Architecture
-
-The simulator acts as an external sensor client.
-
-It intentionally does not directly modify the database.
-
-Instead:
-
-```text
-Simulator
-    ↓ HTTP
-FastAPI
-    ↓
-Application rules
-    ↓
-PostgreSQL
-```
-
-This is important because simulated reports pass through the same validation and processing path that any future sensor client would use.
-
----
-
-## 18.1 Motion Model
-
-Track motion uses basic kinematics.
-
-Starting with:
-
-```text
-speed
-heading
-elapsed time
-```
-
-speed is converted from knots to meters per second:
-
-```text
-knots × 0.514444
-```
-
-Distance traveled is:
-
-```text
-speed × elapsed time
-```
-
-Heading is resolved into:
-
-```text
-north component
-east component
-```
-
-using:
-
-```text
-north = distance × cos(heading)
-east  = distance × sin(heading)
-```
-
-The resulting displacement is converted approximately into latitude and longitude changes.
-
-The simulator also applies small randomized changes to:
-
-```text
-heading
-speed
+sensor_id
+source_track_id
+track_id
+latitude
+longitude
 altitude
+heading
+speed
+timestamp
 ```
 
-to avoid perfectly linear motion.
+Observation kinematics remain raw.
+
+They are not replaced with the smoothed system state.
+
+### Track
+
+A `Track` represents the application's latest belief about a system-level object.
+
+Important state includes:
+
+```text
+track_id
+sensor_id
+quality
+latitude
+longitude
+altitude
+heading
+speed
+last_seen
+classification
+```
+
+`Track.sensor_id` represents the latest contributing sensor.
+
+The complete source history is maintained separately.
+
+### TrackSource
+
+`TrackSource` records source provenance.
+
+Each row identifies a sensor/source identity that has contributed to one system track:
+
+```text
+track_id
+sensor_id
+source_track_id
+first_seen
+last_seen
+observation_count
+```
+
+The uniqueness constraint is:
+
+```text
+track_id
++ sensor_id
++ source_track_id
+```
+
+A foreign key links `TrackSource.track_id` to `Track.track_id`.
 
 ---
 
-# 19. Sensor Imperfections
+## 5. Observation Ingestion Pipeline
 
-The simulator intentionally generates imperfect data availability.
+The principal ingestion path is:
 
-Supported behaviors include:
-
-```text
-single-report dropout
-temporary sensor outage
-reacquisition
-new track generation
-track termination
+```http
+POST /observations
 ```
 
-A short dropout may not be sufficient to make a track stale.
-
-A longer outage can produce:
-
-```text
-ACTIVE
-↓
-STALE
-↓
-ACTIVE
-```
-
-following reacquisition.
-
-Permanent termination eventually produces:
-
-```text
-ACTIVE
-↓
-STALE
-↓
-DROPPED
-```
-
-because no further observations update `last_seen`.
-
-This allows the system to exercise track-aging logic under imperfect reporting conditions.
-
----
-
-# 20. Configuration Architecture
-
-Backend configuration is centralized using Pydantic Settings.
-
-The priority is approximately:
-
-```text
-runtime environment variable
-        ↓
-.env value
-        ↓
-application default
-```
-
-This allows Docker Compose to override values such as:
-
-```text
-DB_HOST
-DB_PORT
-```
-
-without modifying source code.
-
----
-
-## 20.1 Local Database Addressing
-
-When Python runs directly on Windows and connects to Docker PostgreSQL:
-
-```text
-Windows application
-      ↓
-localhost:5433
-      ↓
-Docker port mapping
-      ↓
-PostgreSQL :5432
-```
-
----
-
-## 20.2 Docker Database Addressing
-
-When FastAPI runs inside Docker:
-
-```text
-backend container
-      ↓
-db:5432
-      ↓
-PostgreSQL container
-```
-
-The hostname:
-
-```text
-db
-```
-
-is resolved through the Docker Compose network.
-
----
-
-# 21. Frontend Environment Configuration
-
-The browser cannot use Docker-only service names such as:
-
-```text
-backend
-```
-
-because frontend JavaScript executes on the user's machine, not inside the Nginx container.
-
-Therefore the Dockerized frontend currently accesses:
-
-```text
-http://127.0.0.1:8000
-```
-
-through the published backend port.
-
-In a deployed environment, this can become:
-
-```text
-https://api.example.com
-```
-
-with WebSockets using:
-
-```text
-wss://api.example.com
-```
-
-Vite environment values are generally resolved during the frontend build process.
-
----
-
-# 22. Docker Architecture
-
-Docker Compose currently defines:
-
-```text
-db
-backend
-frontend
-```
-
-Conceptually:
+The request flows through the following stages.
 
 ```mermaid
 flowchart TD
-    Browser[Browser]
+    A[SensorObservation received]
+    B[Pydantic validation]
+    C[Attempt association]
+    D{Existing system track?}
+    E[Update track quality]
+    F[Estimate new system state]
+    G[Create new SYS track]
+    H[Create raw Observation]
+    I[Update or create TrackSource]
+    J[Commit transaction]
+    K[Calculate status]
+    L[Broadcast WebSocket update]
+    M[Return API response]
 
-    subgraph Docker
-        FE[Nginx / React]
-        API[FastAPI]
-        PG[(PostgreSQL)]
-    end
+    A --> B
+    B --> C
+    C --> D
 
-    Browser -->|:8080| FE
-    Browser -->|:8000 REST / WS| API
-    API -->|db:5432| PG
+    D -->|Yes| E
+    E --> F
+    F --> H
+
+    D -->|No| G
+    G --> H
+
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    L --> M
 ```
 
-The PostgreSQL service uses a named volume:
+For newly created tracks, the SQLAlchemy session is explicitly flushed before inserting dependent `TrackSource` rows so PostgreSQL can satisfy the foreign-key relationship while preserving the larger transaction.
+
+A flush is not a commit.
+
+If later processing fails, the entire transaction can still roll back.
+
+---
+
+## 6. Observation Validation
+
+`SensorObservation` validates incoming telemetry before tracking logic executes.
+
+Current validation includes:
+
+```text
+latitude     -90 through 90
+longitude    -180 through 180
+heading      >= 0 and < 360
+speed        >= 0
+timestamp    timezone-aware
+```
+
+Timestamps are normalized to UTC.
+
+Invalid observations are rejected before persistence or association.
+
+---
+
+## 7. Association Pipeline
+
+Association occurs in two stages.
+
+### 7.1 Source Continuity
+
+The system first checks whether the exact:
+
+```text
+sensor_id + source_track_id
+```
+
+has recently contributed to an existing system track.
+
+Direct source continuity currently uses a:
+
+```text
+60-second window
+```
+
+If the source is recent, the previous system identity is retained.
+
+The resulting method is:
+
+```text
+SOURCE_CONTINUITY
+```
+
+This is stronger than simply searching historical observations because source identities are not trusted indefinitely.
+
+### 7.2 Physical Correlation
+
+If source continuity is unavailable or expired, normal physical correlation is attempted.
+
+Candidate tracks must be recent enough to evaluate.
+
+The current general association window is:
+
+```text
+20 seconds
+```
+
+For each candidate, the application compares the incoming observation against a predicted position and evaluates:
+
+```text
+geographic distance
+altitude difference
+speed difference
+heading difference
+time difference
+```
+
+Candidates outside configured gates are discarded.
+
+---
+
+## 8. Prediction
+
+Association does not compare an incoming observation only against a candidate's previous recorded location.
+
+The prediction service estimates where the candidate should be at the incoming observation time.
+
+The current predictor uses:
+
+```text
+heading
+speed
+elapsed time
+latitude
+longitude
+```
+
+Speed is converted from knots to meters per second.
+
+Motion is resolved into north/east components using the candidate heading.
+
+The resulting predicted latitude and longitude are then used by the association distance calculation.
+
+Prediction with negative elapsed time is rejected.
+
+---
+
+## 9. Association Gates
+
+The current first-pass gates are intentionally understandable and configurable.
+
+```text
+Association time window       20 seconds
+Maximum altitude difference   2000 ft
+Maximum speed difference      100 kt
+Maximum heading difference    60 degrees
+Base distance gate            1000 m
+```
+
+The distance gate expands with expected travel:
+
+```text
+distance_gate
+=
+base_distance_gate
++
+expected_travel * 1.5
+```
+
+where expected travel depends on speed and elapsed time.
+
+---
+
+## 10. Association Scoring
+
+Candidates that survive all gates receive a normalized score.
+
+Conceptually:
+
+```text
+score =
+normalized distance
++ normalized altitude difference
++ normalized speed difference
++ normalized heading difference
+```
+
+Lower scores represent better matches.
+
+The candidate with the lowest score is selected.
+
+This means the association system is not simply a nearest-neighbor lookup.
+
+A slightly farther candidate with strongly matching altitude, heading, and speed can beat a geographically closer candidate with poor kinematic agreement.
+
+The automated test suite includes an ambiguous-candidate scenario specifically validating this behavior.
+
+---
+
+## 11. Association Confidence
+
+Correlation scores are also translated into an explainable confidence label.
+
+Current thresholds are:
+
+```text
+score <= 0.50        HIGH CONFIDENCE
+0.50 < score < 1.00 MEDIUM CONFIDENCE
+score >= 1.00        LOW CONFIDENCE
+```
+
+Association confidence describes one specific correlation decision.
+
+It is distinct from persistent track quality.
+
+---
+
+## 12. Track Quality
+
+Each system track maintains a quality value from:
+
+```text
+0.0 to 1.0
+```
+
+New tracks begin at:
+
+```text
+0.50
+```
+
+The current quality policy is:
+
+```text
+SOURCE_CONTINUITY
++0.05
+
+CORRELATION score <= 0.50
++0.08
+
+CORRELATION score < 1.00
++0.03
+
+CORRELATION score >= 1.00
+-0.05
+```
+
+Quality is clamped between:
+
+```text
+0.0 and 1.0
+```
+
+This produces an evolving indication of how much supporting evidence the application has accumulated for a system track.
+
+Track quality does not represent freshness.
+
+---
+
+## 13. State Estimation
+
+Raw incoming observations do not directly replace the current system state after initial track creation.
+
+For existing tracks, the estimator combines:
+
+```text
+previous estimated state
++
+incoming sensor measurement
+```
+
+using a configurable exponential blend.
+
+The current default is:
+
+```text
+alpha = 0.65
+```
+
+For linear state fields:
+
+```text
+new estimate
+=
+alpha × measurement
++
+(1 - alpha) × previous estimate
+```
+
+The estimator currently smooths:
+
+```text
+latitude
+longitude
+altitude
+speed
+heading
+```
+
+### Circular Heading Estimation
+
+Heading requires circular arithmetic.
+
+A transition from:
+
+```text
+359° → 1°
+```
+
+must not be interpreted as a 358-degree turn.
+
+The estimator determines the shortest signed angular difference and blends across the 0/360-degree boundary.
+
+This keeps heading behavior consistent with the physical meaning of the measurement.
+
+The estimator intentionally remains simple and explainable rather than implementing a Kalman filter or other advanced state-estimation system.
+
+---
+
+## 14. Source Provenance
+
+Every successfully processed observation updates source provenance.
+
+For an existing contributor:
+
+```text
+last_seen
+observation_count
+```
+
+are updated.
+
+For a new contributor, a new `TrackSource` row is created with:
+
+```text
+first_seen
+last_seen
+observation_count = 1
+```
+
+This makes it possible to determine which sensors have supported a system track over time instead of relying only on the most recent sensor.
+
+---
+
+## 15. Source Expiration and Reacquisition
+
+Source continuity and system identity have separate lifecycles.
+
+Consider:
+
+```text
+RADAR-01 / RDR-100
+        ↓
+SYS-ABC
+```
+
+If RADAR-01 disappears for longer than the continuity window, `RDR-100` is no longer automatically trusted.
+
+However, another sensor may continue updating:
+
+```text
+EO-02 / EO-200
+        ↓
+SYS-ABC
+```
+
+If RADAR-01 later returns, the expired source ID must pass physical correlation.
+
+If it matches the still-active system track:
+
+```text
+CORRELATION
+        ↓
+RADAR-01 rejoins SYS-ABC
+```
+
+This allows system identity to survive temporary loss of one source without trusting source IDs forever.
+
+---
+
+## 16. Track Freshness
+
+Freshness is derived from:
+
+```text
+current time - Track.last_seen
+```
+
+Current thresholds:
+
+```text
+age < 10 sec       ACTIVE
+age >= 10 sec      STALE
+age >= 30 sec      DROPPED
+```
+
+Boundary behavior is covered by unit tests.
+
+Status and quality remain intentionally independent.
+
+Example:
+
+```text
+quality = 0.94
+status  = DROPPED
+```
+
+means the system had strong historical support for the track, but has not received a recent observation.
+
+---
+
+## 17. Transaction Model
+
+Observation processing uses one database transaction for the related changes.
+
+Conceptually:
+
+```text
+Track update/create
+Observation creation
+TrackSource update/create
+        ↓
+single commit
+```
+
+Successful tracking events are logged and broadcast only after the transaction commits.
+
+If commit fails:
+
+```text
+db.rollback()
+```
+
+is executed and an error-level structured log is emitted.
+
+This prevents clients from receiving a track update that was never successfully persisted.
+
+---
+
+## 18. REST API
+
+FastAPI provides REST endpoints for current and historical system data.
+
+Major route families include:
+
+```text
+/observations
+/tracks
+/health
+/ready
+```
+
+Track APIs support current-state inspection, searching, status-based workflows, and source-provenance inspection.
+
+The source endpoint:
+
+```http
+GET /tracks/{track_id}/sources
+```
+
+returns all contributing sensor/source identities for the requested system track.
+
+---
+
+## 19. WebSocket Distribution
+
+The live dashboard connects to:
+
+```text
+/ws/tracks
+```
+
+After a successful transaction, the backend broadcasts a `track_updated` message containing current system state and association metadata.
+
+The frontend therefore does not need to repeatedly poll PostgreSQL for every change.
+
+REST provides initial/historical data.
+
+WebSockets provide live state changes.
+
+---
+
+## 20. Frontend Architecture
+
+The dashboard is implemented with React and TypeScript.
+
+Major UI capabilities include:
+
+```text
+interactive Leaflet map
+live track markers
+heading-based marker rotation
+track selection
+track trails
+search
+filters
+status display
+track quality display
+sensor display
+position and kinematics
+historical charts
+```
+
+Shared TypeScript interfaces define current track state and WebSocket track updates.
+
+`TrackUpdate` extends the base `Track` interface rather than duplicating common state definitions.
+
+---
+
+## 21. Simulator
+
+The synthetic sensor simulator provides repeatable development traffic.
+
+It generates observations approximately every two seconds and models behaviors such as:
+
+```text
+movement
+multiple sensors
+temporary outages
+reacquisition
+spawning
+termination
+```
+
+Motion uses basic heading/speed-based geographic updates.
+
+The simulator is synthetic and intentionally limited.
+
+It is designed to exercise the software architecture rather than reproduce an operational sensor model.
+
+---
+
+## 22. Docker Topology
+
+The application runs as three primary Docker Compose services:
+
+```mermaid
+flowchart LR
+    HOST[Host Machine]
+
+    subgraph DOCKER[Docker Compose]
+        FRONTEND[Frontend :80]
+        BACKEND[Backend :8000]
+        DB[(PostgreSQL :5432)]
+    end
+
+    HOST -->|8080| FRONTEND
+    HOST -->|8000| BACKEND
+    HOST -->|5433| DB
+
+    FRONTEND --> BACKEND
+    BACKEND -->|db:5432| DB
+```
+
+Host-side development tools connect to PostgreSQL using:
+
+```text
+localhost:5433
+```
+
+The backend container connects using:
+
+```text
+db:5432
+```
+
+These are intentionally different network contexts.
+
+PostgreSQL data is stored in the persistent:
 
 ```text
 postgres_data
 ```
 
-so container recreation does not normally destroy the stored data.
+Docker volume.
 
 ---
 
-# 23. Database Migration Architecture
+## 23. Database Migrations
 
-SQLAlchemy models describe the application's expected schema.
+Alembic owns production/development schema evolution.
 
-Alembic controls how the real database moves between schema versions.
+The backend container starts using:
 
 ```text
-SQLAlchemy model change
-        ↓
-Alembic revision
-        ↓
-review migration
-        ↓
 alembic upgrade head
         ↓
-PostgreSQL schema updated
+uvicorn
 ```
 
-The backend container currently runs migrations before starting Uvicorn.
+This ensures pending schema changes are applied before application traffic is served.
+
+Schema changes implemented during the project include:
 
 ```text
-container startup
-      ↓
-alembic upgrade head
-      ↓
-Uvicorn
-```
-
-For the current single-backend development environment, this provides a convenient deployment workflow.
-
-For a future horizontally scaled production environment, schema migration would typically become a separate deployment step or job rather than being executed independently by every application replica.
-
----
-
-# 24. Testing Architecture
-
-Tests are located outside the application package:
-
-```text
-tests/
-```
-
-The test suite currently includes unit and route-level integration tests.
-
-```text
-Unit testing
-    ↓
-service/business logic only
-
-Route testing
-    ↓
-FastAPI
-Pydantic
-SQLAlchemy
-test database
-```
-
-The test suite currently contains 15 automated tests.
-
----
-
-## 24.1 Unit Tests
-
-Track status logic is tested independently of:
-
-```text
-FastAPI
-HTTP
-PostgreSQL
-Docker
-```
-
-Tests inject a deterministic `now` value so time-dependent behavior does not depend on the system clock.
-
-Boundary conditions are explicitly tested.
-
----
-
-## 24.2 Route Tests
-
-FastAPI's `TestClient` exercises routes through HTTP-like requests.
-
-During tests, the normal database dependency:
-
-```text
-get_db()
-```
-
-is replaced with a test database dependency.
-
-```text
-FastAPI route
-     ↓
-dependency override
-     ↓
-isolated SQLite database
-```
-
-Tables are created before each test and removed afterward.
-
-This prevents test records from contaminating development PostgreSQL data.
-
----
-
-## 24.3 SQLite vs PostgreSQL
-
-SQLite is currently used because it provides extremely fast isolated route testing.
-
-However, SQLite and PostgreSQL do not behave identically.
-
-One discovered difference involved timezone-aware SQLAlchemy fields:
-
-```text
-PostgreSQL
-→ preserves timezone awareness
-
-SQLite
-→ may return naive datetime values
-```
-
-This led to the introduction of centralized UTC normalization.
-
-Future test architecture may add a dedicated PostgreSQL integration-test environment for database-specific behavior while retaining SQLite for fast application tests.
-
----
-
-# 25. Failure Boundaries
-
-Several architecture decisions intentionally establish failure boundaries.
-
-A malformed observation fails at:
-
-```text
-Pydantic validation
-```
-
-before reaching database logic.
-
-A database failure prevents:
-
-```text
-WebSocket broadcast
-```
-
-because broadcasting happens only after persistence succeeds.
-
-A disconnected frontend does not prevent:
-
-```text
-observation persistence
-```
-
-because the database is not dependent on a browser connection.
-
-A simulator outage does not crash:
-
-```text
-FastAPI
-PostgreSQL
-React
-```
-
-because the simulator is an independent client.
-
-These separations reduce coupling between components.
-
----
-
-# 26. Current Data Flow
-
-The complete runtime flow can be represented as:
-
-```text
-Synthetic object state
-        ↓
-Sensor Simulator
-        ↓
-SensorObservation JSON
-        ↓
-HTTP POST /observations
-        ↓
-Pydantic validation
-        ↓
-Observation INSERT
-        ↓
-Track SELECT
-        ↓
-Track INSERT / UPDATE
-        ↓
-PostgreSQL COMMIT
-        ↓
-Track status calculation
-        ↓
-WebSocket broadcast
-        ↓
-React state
-        ↓
-Leaflet marker update
-        ↓
-Operator display
-```
-
-Historical flow:
-
-```text
-Operator selects track
-        ↓
-GET /observations/{track_id}
-        ↓
-PostgreSQL history query
-        ↓
-chronological Observation[]
-        ↓
-React
-        ↓
-map trail + charts
-```
-
----
-
-# 27. Architectural Evolution
-
-The current architecture deliberately establishes boundaries that can support future tracking functionality.
-
-Future development may introduce:
-
-```text
-Observation
-     ↓
-association engine
-     ↓
-candidate tracks
-     ↓
-correlation logic
-     ↓
-state estimation
-     ↓
-fused Track
-```
-
-At that point, an incoming sensor-provided identifier may no longer be treated as identical to the system's authoritative track identity.
-
-The system can evolve toward:
-
-```text
-sensor observation ID
-        ≠
-system track ID
-```
-
-which creates the foundation for real multi-sensor correlation.
-
----
-
-# 28. Future Architecture Areas
-
-Planned architectural areas include:
-
-```text
-multi-sensor association
-track correlation
-confidence scoring
-classification
+initial observations/tracks schema
+track classification
+source_track_id
 track quality
-state estimation
-Kalman filtering
-prediction
-geospatial events
-authentication
-authorization
-structured logging
-metrics
-health monitoring
-PostgreSQL test containers
-CI/CD
-cloud deployment
-horizontal WebSocket scaling
-message queues / event streaming
+track_sources provenance table
 ```
-
-Not all of these are necessary for the system's current scope.
-
-They represent logical growth paths as the project moves from a single-service tracking application toward a more distributed real-time architecture.
 
 ---
 
-# 29. Design Principle
+## 24. Health and Readiness
 
-The project's core architectural principle is:
+The backend exposes:
 
-> Sensor observations are evidence. Tracks are system state.
+```http
+GET /health
+```
 
-A sensor report describes what one source observed at one point in time.
+for application liveness.
 
-A track represents the system's evolving interpretation of an object over time.
+It also exposes:
 
-The current implementation begins with a simple one-to-one association between incoming `track_id` and system `Track`.
+```http
+GET /ready
+```
 
-Future iterations can replace that assumption with correlation, association, confidence, and state-estimation logic without needing to redesign the entire application boundary.
+for dependency readiness.
+
+`/ready` performs a database query equivalent to:
+
+```sql
+SELECT 1;
+```
+
+Docker uses the readiness endpoint as the backend container healthcheck.
+
+This means a running Python process alone is not sufficient for the backend to be considered healthy.
+
+---
+
+## 25. Structured Logging
+
+Python's standard logging framework emits concise application-level tracking events.
+
+Examples include:
+
+```text
+event=TRACK_CREATED
+event=SOURCE_CONTINUITY
+event=TRACK_CORRELATED
+event=OBSERVATION_COMMIT_FAILED
+```
+
+Normal telemetry values are not continuously dumped into logs.
+
+The goal is to log tracking decisions and failures rather than recreate the observation stream in console output.
+
+---
+
+## 26. Testing Architecture
+
+The backend test suite currently contains:
+
+```text
+63 passing tests
+```
+
+Tests use an isolated in-memory SQLite database.
+
+SQLite foreign-key enforcement is explicitly enabled so relational behavior more closely resembles PostgreSQL.
+
+Coverage includes:
+
+```text
+track status
+observation ingestion
+validation
+history
+REST routes
+multi-sensor association
+prediction
+ambiguous candidates
+confidence thresholds
+track quality
+source provenance
+continuity expiration
+reacquisition
+state estimation
+circular heading handling
+foreign-key relationships
+health/readiness
+```
+
+Pure computational services such as prediction, status, quality, and state estimation are intentionally separated from FastAPI and SQLAlchemy concerns where practical.
+
+This makes the tracking behavior easier to test independently.
+
+---
+
+## 27. Key Architectural Decisions
+
+### Sensor identity is not system identity
+
+This enables multiple sensors to contribute to one authoritative application track.
+
+### Observations remain raw
+
+Historical evidence is not modified when the system's estimate changes.
+
+### Track represents system belief
+
+The track table stores the current estimated state rather than simply duplicating the latest observation.
+
+### Source provenance is persistent
+
+The application can explain which sources have contributed to a system track.
+
+### Source IDs expire
+
+A historical sensor ID is not trusted forever.
+
+### Freshness and quality are independent
+
+A well-established track can still be stale or dropped.
+
+### Tracking logic remains explainable
+
+The current system intentionally stops short of advanced state-estimation mathematics such as Kalman filtering.
+
+The objective is a defensible, testable implementation whose major design decisions can be clearly explained.
+
+---
+
+## 28. Current Boundaries
+
+The current application is a synthetic development and portfolio system.
+
+It does not currently attempt to provide:
+
+```text
+operational sensor fusion
+production aerospace navigation
+Kalman filtering
+probabilistic covariance modeling
+distributed event streaming
+high-availability database clustering
+real sensor ingestion
+classified data processing
+```
+
+These are intentionally outside the current project scope.
+
+Future work is primarily focused on software-engineering maturity, deployment, documentation, observability, and demonstration quality rather than unnecessary increases in tracking algorithm complexity.

@@ -1,77 +1,191 @@
 # Sensor Track System
 
-A real-time sensor tracking and visualization platform built with FastAPI, PostgreSQL, React, TypeScript, WebSockets, and Docker.
+A real-time multi-sensor tracking, correlation, logging, and visualization system built with FastAPI, PostgreSQL, React, TypeScript, Docker, and WebSockets.
 
-The system accepts simulated sensor observations, maintains current track state, preserves historical observations, detects track freshness and loss, and broadcasts updates to a live operator-style dashboard.
+The project simulates a limited aerospace operational picture using synthetic radar and electro-optical sensor reports. Incoming observations are validated, correlated against system-owned tracks, persisted to PostgreSQL, and distributed to a live operator dashboard.
 
-The project is designed as a hands-on exploration of backend engineering, real-time systems, sensor tracking workflows, database design, and containerized application architecture.
+The project is intentionally focused on explainable tracking logic and software engineering rather than advanced or classified sensor-fusion algorithms.
 
 ---
 
 ## Overview
 
-Sensor systems rarely deal with a single static record.
+Individual sensors report observations containing:
 
-They continuously receive observations describing a moving object:
+- sensor identity
+- sensor-owned track identity
+- latitude
+- longitude
+- altitude
+- heading
+- speed
+- timestamp
+
+The backend does not treat a sensor's track ID as the authoritative identity.
+
+Instead, the application creates and maintains its own system-owned identifiers:
 
 ```text
-Observation
-    ↓
-Track update
-    ↓
-Persist history
-    ↓
-Determine track status
-    ↓
-Broadcast update
-    ↓
-Operator dashboard
+RADAR-01 / RDR-441
+EO-02    / EO-827
+        ↓
+SYS-A1B2C3D4E5F6
 ```
 
-This project models that workflow.
-
-Each incoming observation is permanently stored while a separate `Track` record represents the most recent known state of that track.
-
-That distinction allows the system to support both:
-
-- real-time situational awareness
-- historical track reconstruction and analysis
+This allows observations from multiple sensors to contribute to the same system-level track.
 
 ---
 
-## System Architecture
+## Core Capabilities
+
+### Multi-Sensor Association
+
+Incoming observations are evaluated using:
+
+- recent source continuity
+- observation timing
+- predicted track position
+- geographic distance
+- altitude difference
+- speed difference
+- heading difference
+
+Candidate tracks outside configured gates are rejected.
+
+Remaining candidates receive a normalized association score, where lower values represent better matches.
+
+If no candidate qualifies, a new `SYS-*` track is created.
+
+### Source Continuity and Reacquisition
+
+Sensor identities are trusted only for a limited continuity window.
+
+A previously seen:
+
+```text
+sensor_id + source_track_id
+```
+
+can preserve direct continuity while it is recent.
+
+If that continuity expires, the observation must pass normal physical correlation before it can reconnect to the previous system track.
+
+This prevents reused sensor track IDs from automatically inheriting an unrelated historical track.
+
+### Track Quality
+
+Each system track maintains a quality value between:
+
+```text
+0.00 → 1.00
+```
+
+New tracks begin at:
+
+```text
+0.50
+```
+
+Quality evolves based on continued supporting evidence.
+
+Source continuity increases quality, strong correlations increase it further, and weak correlations can reduce it.
+
+Track quality is separate from track freshness.
+
+### State Estimation
+
+Raw observations are preserved exactly as reported by the sensor.
+
+The current `Track` state represents the system's estimated belief and is smoothed rather than directly overwritten by every incoming measurement.
+
+The estimator currently blends:
+
+- latitude
+- longitude
+- altitude
+- speed
+- heading
+
+Heading uses circular-angle logic so transitions such as:
+
+```text
+359° → 1°
+```
+
+are handled correctly.
+
+### Source Provenance
+
+The system records which sensor/source identities have contributed to each system track.
+
+For every contributor, PostgreSQL stores:
+
+- sensor ID
+- source track ID
+- first seen
+- last seen
+- observation count
+
+This allows the latest reporting sensor and the complete contributor history to remain separate concepts.
+
+### Track Freshness
+
+Tracks are classified by the age of their latest observation:
+
+```text
+ACTIVE
+STALE
+DROPPED
+```
+
+The current thresholds are:
+
+```text
+ACTIVE   < 10 seconds
+STALE    >= 10 seconds
+DROPPED  >= 30 seconds
+```
+
+A high-quality track can therefore still become stale or dropped if observations stop arriving.
+
+---
+
+## Architecture
 
 ```mermaid
 flowchart LR
     SIM[Sensor Simulator]
-
     API[FastAPI Backend]
-
+    ASSOC[Association / Prediction]
+    STATE[Quality + State Estimation]
     DB[(PostgreSQL)]
-
     WS[WebSocket Manager]
-
-    UI[React Operator Dashboard]
+    UI[React / TypeScript Dashboard]
 
     SIM -->|POST /observations| API
-
-    API -->|Store Observation| DB
-    API -->|Create / Update Track| DB
-
+    API --> ASSOC
+    ASSOC --> STATE
+    STATE --> DB
+    DB --> API
     API --> WS
-    WS -->|track_updated| UI
-
-    UI -->|REST Queries| API
+    WS -->|Live track updates| UI
+    UI -->|REST queries| API
 ```
 
-The application is divided into four primary components:
+The three primary persistence concepts are:
 
-| Component | Responsibility |
-|---|---|
-| Sensor Simulator | Generates moving tracks, reports, outages, dropouts, spawning, and termination |
-| FastAPI Backend | Validation, track management, API routes, status logic, and WebSocket broadcasting |
-| PostgreSQL | Persistent track state and historical observation storage |
-| React Dashboard | Real-time map display, track inspection, filtering, trails, charts, and status visualization |
+```text
+Observation
+= what the sensor reported
+
+Track
+= what the system currently believes
+
+TrackSource
+= who contributed to that belief
+```
+
+See [`docs/architecture.md`](docs/architecture.md) for the detailed system design.
 
 ---
 
@@ -79,11 +193,11 @@ The application is divided into four primary components:
 
 ### Backend
 
-- Python
+- Python 3.13
 - FastAPI
-- Pydantic
 - SQLAlchemy 2
-- PostgreSQL
+- Pydantic
+- PostgreSQL 17
 - Alembic
 - WebSockets
 - Uvicorn
@@ -93,361 +207,29 @@ The application is divided into four primary components:
 - React
 - TypeScript
 - Vite
-- Leaflet
-- React Leaflet
+- Leaflet / React-Leaflet
 - Recharts
-- WebSockets
 
-### Infrastructure and Testing
+### Infrastructure
 
 - Docker
 - Docker Compose
-- Nginx
-- pytest
+- PostgreSQL persistent volumes
+- Application health/readiness checks
+
+### Testing
+
+- Pytest
 - FastAPI TestClient
-- SQLite for fast isolated route tests
+- SQLite test database with foreign-key enforcement
 
----
-
-## Data Model
-
-### Observation
-
-An `Observation` represents one sensor report.
-
-Observations are historical records and are never replaced when a track moves.
-
-Example:
+The current automated suite contains:
 
 ```text
-TRK-1001
-
-12:00:00  lat/lon A
-12:00:02  lat/lon B
-12:00:04  lat/lon C
-12:00:06  lat/lon D
+63 passing tests
 ```
 
-This allows the application to reconstruct a track's movement over time.
-
-Typical fields include:
-
-```text
-id
-sensor_id
-track_id
-latitude
-longitude
-altitude
-heading
-speed
-timestamp
-```
-
-### Track
-
-A `Track` represents the current known state of an object.
-
-Instead of creating another track row for every report, the existing record is updated.
-
-```text
-TRK-1001
-    ↓
-latest latitude
-latest longitude
-latest altitude
-latest heading
-latest speed
-latest sensor
-last_seen
-classification
-```
-
-The current schema also supports a track classification field with a default state of:
-
-```text
-UNKNOWN
-```
-
-This schema is versioned through Alembic migrations.
-
----
-
-## Observation Processing
-
-When the backend receives:
-
-```http
-POST /observations
-```
-
-the application performs the following workflow:
-
-```text
-Validate observation
-        ↓
-Create historical Observation
-        ↓
-Find matching Track
-        ↓
-┌───────────────────┐
-│ Existing track?   │
-└───────────────────┘
-     ↓ yes      ↓ no
-   update       create
-     └──────┬──────┘
-            ↓
-       Commit transaction
-            ↓
-     Calculate status
-            ↓
-     Broadcast WebSocket
-```
-
-The observation and current track update are committed together.
-
-This prevents clients from receiving a live event for state that was not successfully persisted.
-
----
-
-## Track Status
-
-Track status is derived from the amount of time elapsed since the most recent sensor observation.
-
-Current development thresholds are:
-
-| Age | Status |
-|---:|---|
-| Less than 10 seconds | `ACTIVE` |
-| 10–29.999 seconds | `STALE` |
-| 30 seconds or greater | `DROPPED` |
-
-Example lifecycle:
-
-```text
-ACTIVE
-  ↓
-sensor reports stop
-  ↓
-STALE
-  ↓
-reports remain absent
-  ↓
-DROPPED
-```
-
-If reports resume:
-
-```text
-STALE
-  ↓
-new observation
-  ↓
-ACTIVE
-```
-
-Datetime operations are normalized to UTC throughout application business logic.
-
----
-
-## Sensor Simulator
-
-The simulator generates synthetic sensor traffic and sends observations to the FastAPI backend.
-
-It models more than simple random coordinates.
-
-Movement uses:
-
-```text
-speed
-heading
-elapsed time
-    ↓
-distance traveled
-    ↓
-north/east displacement
-    ↓
-updated latitude/longitude
-```
-
-Speed is converted from knots to meters per second, and heading is resolved into north/east components.
-
-The simulator also models:
-
-- slight heading changes
-- speed changes
-- altitude changes
-- individual dropped reports
-- temporary sensor outages
-- track reacquisition
-- new track spawning
-- track termination
-
-Example:
-
-```text
-TRK-1004 SPAWNED
-
-TRK-1001 200 34.9201 -80.9082
-TRK-1002 observation dropped
-TRK-1003 LOST - 16s outage
-
-TRK-1003 SENSOR OUTAGE
-TRK-1003 SENSOR OUTAGE
-...
-TRK-1003 REACQUIRED
-```
-
-The simulator API target is environment-configurable using:
-
-```text
-SENSOR_API_URL
-```
-
----
-
-## Real-Time WebSockets
-
-Clients connect to:
-
-```text
-/ws/tracks
-```
-
-After an observation is persisted, the backend broadcasts a `track_updated` event.
-
-Example payload:
-
-```json
-{
-  "event": "track_updated",
-  "observation_id": 125,
-  "track_id": "TRK-1001",
-  "sensor_id": "RADAR-01",
-  "latitude": 34.92,
-  "longitude": -80.91,
-  "altitude": 12000,
-  "heading": 90,
-  "speed": 180,
-  "status": "ACTIVE",
-  "last_seen": "2026-09-10T12:00:00+00:00"
-}
-```
-
-The React application consumes these messages and updates the appropriate track without repeatedly polling the REST API.
-
----
-
-## Operator Dashboard
-
-The React dashboard provides a real-time operational view of the track picture.
-
-Current functionality includes:
-
-- live Leaflet map
-- heading-oriented track markers
-- track identification labels
-- ACTIVE / STALE / DROPPED visualization
-- selected-track detail panel
-- historical track trails
-- historical observation markers
-- altitude history charts
-- speed history charts
-- configurable trail length
-- track ID search
-- sensor filtering
-- status filtering
-- map focus on selected tracks
-- reset-to-track-picture view
-- live WebSocket updates
-
-The frontend also recalculates track freshness locally so tracks can transition from:
-
-```text
-ACTIVE → STALE → DROPPED
-```
-
-even when no new WebSocket messages are being received.
-
----
-
-## API
-
-Interactive API documentation is provided automatically by FastAPI at:
-
-```text
-http://localhost:8000/docs
-```
-
-### Observations
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/observations` | Submit a sensor observation |
-| `GET` | `/observations` | Retrieve all historical observations |
-| `GET` | `/observations/{track_id}` | Retrieve observation history for a track |
-| `GET` | `/observations/{track_id}/latest` | Retrieve the most recent observation |
-
-Track history supports:
-
-```text
-?limit=100
-```
-
-and returns the selected observations in chronological order for frontend visualization.
-
-### Tracks
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/tracks` | Retrieve current track states |
-| `GET` | `/tracks/status` | Retrieve tracks with derived status and age |
-| `GET` | `/tracks/search` | Filter current tracks |
-| `GET` | `/tracks/{track_id}` | Retrieve a specific track |
-| `GET` | `/tracks/{track_id}/status` | Retrieve status for a specific track |
-
-Track search supports optional filtering by:
-
-```text
-sensor_id
-min_altitude
-max_altitude
-min_speed
-max_speed
-```
-
-Invalid ranges such as:
-
-```text
-min_altitude > max_altitude
-```
-
-are rejected by the API.
-
----
-
-## Validation
-
-Incoming sensor data is validated using Pydantic.
-
-Examples include:
-
-```text
--90 <= latitude <= 90
--180 <= longitude <= 180
-0 <= heading < 360
-speed >= 0
-```
-
-Incoming timestamps must contain timezone information and are normalized to UTC.
-
-Invalid reports receive an HTTP:
-
-```text
-422 Unprocessable Entity
-```
-
-before database logic is executed.
+covering association, prediction, source lifecycle, quality, provenance, API behavior, state estimation, heading wraparound, and database behavior.
 
 ---
 
@@ -455,353 +237,277 @@ before database logic is executed.
 
 ```text
 sensor_track_system/
-│
-├── alembic/
-│   └── versions/
-│
 ├── app/
-│   ├── database/
 │   ├── models/
 │   ├── routes/
-│   │   ├── observations.py
-│   │   ├── tracks.py
-│   │   └── websocket.py
 │   ├── schemas/
 │   ├── services/
-│   │   ├── time_utils.py
-│   │   ├── track_status.py
-│   │   └── web_socket_manager.py
+│   ├── database/
 │   ├── config.py
+│   ├── logging_config.py
 │   └── main.py
 │
+├── alembic/
+├── docs/
+│   ├── architecture.md
+│   └── system_walkthrough.md
+│
 ├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── hooks/
-│   │   ├── services/
-│   │   └── types/
-│   └── Dockerfile
+│   └── src/
 │
 ├── simulator/
-│   └── sensor_simulator.py
-│
 ├── tests/
-│   ├── conftest.py
-│   ├── test_observations.py
-│   ├── test_tracks.py
-│   └── test_track_status.py
-│
-├── .env.example
-├── alembic.ini
-├── docker-compose.yml
 ├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 └── requirements-dev.txt
 ```
 
 ---
 
-## Configuration
+## Running the Application
 
-Runtime configuration is environment-based.
+Create your local environment file from the provided example:
 
-Create:
+```powershell
+Copy-Item .env.example .env
+```
+
+Configure the required PostgreSQL settings in `.env`.
+
+Then build and start the complete stack:
+
+```powershell
+docker compose up -d --build
+```
+
+Verify container health:
+
+```powershell
+docker compose ps
+```
+
+Expected services include:
 
 ```text
-.env
+db        healthy
+backend   healthy
+frontend  running
 ```
 
-from:
+The application is then available at:
 
 ```text
-.env.example
+Frontend:
+http://127.0.0.1:8080
+
+FastAPI:
+http://127.0.0.1:8000
+
+Swagger / OpenAPI:
+http://127.0.0.1:8000/docs
 ```
-
-Example:
-
-```env
-DB_USER=your_database_user
-DB_PASSWORD=your_database_password
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=sensor_track
-
-APP_ENV=development
-SQL_ECHO=false
-
-CORS_ORIGINS=["http://localhost:5173","http://127.0.0.1:5173","http://localhost:8080","http://127.0.0.1:8080"]
-
-SENSOR_API_URL=http://127.0.0.1:8000
-```
-
-Actual credentials should never be committed to source control.
-
-### Frontend
-
-Vite configuration uses:
-
-```env
-VITE_API_URL=http://127.0.0.1:8000
-VITE_WS_URL=ws://127.0.0.1:8000
-```
-
-This allows the application to use different REST and WebSocket endpoints without modifying source code.
 
 ---
 
-## Running With Docker
+## Health and Readiness
 
-Docker Compose runs:
+The backend exposes two operational endpoints.
+
+### Liveness
+
+```http
+GET /health
+```
+
+Confirms that the FastAPI application is running.
+
+### Readiness
+
+```http
+GET /ready
+```
+
+Executes a database connectivity check.
+
+A backend container is not considered healthy by Docker until the readiness endpoint confirms PostgreSQL is reachable.
+
+---
+
+## Main API Surfaces
+
+### Observations
+
+```http
+POST /observations
+GET /observations
+GET /observations/{track_id}
+GET /observations/{track_id}/latest
+```
+
+### Tracks
+
+```http
+GET /tracks
+GET /tracks/{track_id}
+GET /tracks/{track_id}/sources
+```
+
+Additional track search and status endpoints support dashboard filtering and inspection.
+
+### WebSocket
 
 ```text
-PostgreSQL
-FastAPI
-React/Nginx
+/ws/tracks
 ```
 
-Build and start the stack:
+Successful track updates are broadcast to connected dashboard clients in real time.
 
-```bash
-docker compose up --build
+---
+
+## Synthetic Sensor Simulator
+
+The simulator generates synthetic sensor reports approximately every two seconds.
+
+It supports behaviors including:
+
+- multiple sensors
+- moving targets
+- temporary sensor outages
+- reacquisition
+- track spawning
+- track termination
+- randomized synthetic observations
+
+The simulator exists only to provide repeatable development and demonstration traffic.
+
+No operational, classified, or real-world sensor feeds are used.
+
+---
+
+## Operator Dashboard
+
+The React and TypeScript frontend provides:
+
+- live interactive map
+- moving and rotating track markers
+- track selection
+- current track quality
+- ACTIVE / STALE / DROPPED status
+- sensor information
+- latitude and longitude
+- altitude
+- speed
+- heading
+- track trails
+- selectable trail length
+- search
+- filtering
+- historical altitude and speed charts
+
+REST APIs provide initial and historical data while WebSockets provide live updates.
+
+---
+
+## Structured Logging
+
+Important tracking decisions are emitted as application-level events such as:
+
+```text
+event=TRACK_CREATED
+event=SOURCE_CONTINUITY
+event=TRACK_CORRELATED
+event=OBSERVATION_COMMIT_FAILED
 ```
 
-The application will be available at:
-
-| Service | Address |
-|---|---|
-| Dashboard | `http://localhost:8080` |
-| FastAPI | `http://localhost:8000` |
-| Swagger | `http://localhost:8000/docs` |
-| PostgreSQL host connection | `localhost:5433` |
-
-The PostgreSQL database uses a persistent Docker volume.
-
-Stopping containers normally:
-
-```bash
-docker compose down
-```
-
-does not remove stored track history.
-
-> `docker compose down -v` removes the associated database volume and should only be used when intentionally resetting the database.
+This keeps normal Docker logs focused on meaningful system behavior while preserving framework tracebacks for failures.
 
 ---
 
 ## Database Migrations
 
-Database schema evolution is managed with Alembic.
+Database schema evolution is managed through Alembic.
 
-The backend container runs:
-
-```bash
-alembic upgrade head
-```
-
-before starting Uvicorn.
-
-This ensures the database is upgraded to the schema version expected by the running application.
-
-Create a migration after changing SQLAlchemy models:
-
-```bash
-alembic revision --autogenerate -m "migration description"
-```
-
-Review the generated migration before applying it.
-
-Apply migrations:
-
-```bash
-alembic upgrade head
-```
-
-Check the active revision:
-
-```bash
+```powershell
 alembic current
+alembic heads
+alembic upgrade head
 ```
 
-This project has already demonstrated schema evolution against a persistent PostgreSQL database without destroying existing observation or track data.
+The backend Docker container applies pending migrations before starting Uvicorn.
+
+PostgreSQL data is stored in a persistent Docker volume.
+
+Do not remove the database volume unless intentionally deleting the stored development database.
 
 ---
 
-## Testing
+## Running Tests
 
-The project currently contains **15 automated tests**.
+From the project root with the Python virtual environment active:
 
-Run:
-
-```bash
+```powershell
 python -m pytest -v
 ```
 
-Tests cover:
+The suite currently validates behavior including:
 
-- ACTIVE / STALE / DROPPED business logic
-- track status boundaries
-- valid observation ingestion
-- invalid observation rejection
-- creation of new tracks
-- update of existing tracks
-- preservation of historical observations
-- retrieval of current tracks
-- retrieval of individual tracks
-- missing-track behavior
-- track-status responses
-- observation-history retrieval
-- chronological history ordering
-- history limits
-- HTTP error behavior
-
-Fast route tests use an isolated SQLite database rather than writing synthetic test records into the development PostgreSQL database.
-
-PostgreSQL remains the runtime database used by the full application stack.
+- observation ingestion
+- track creation
+- source continuity
+- multi-sensor association
+- ambiguous candidate selection
+- prediction
+- association confidence
+- track quality
+- TrackSource provenance
+- source continuity expiration
+- cross-sensor reacquisition
+- track freshness
+- REST routes
+- state estimation
+- circular heading smoothing
+- foreign-key behavior
+- health/readiness endpoints
 
 ---
 
-## Engineering Decisions
+## Design Philosophy
 
-### Separate Tracks and Observations
+The project intentionally separates sensor reports from system belief.
 
-A track is not the same thing as a sensor observation.
+Raw observations remain immutable historical evidence.
 
-Keeping them separate provides:
+System tracks maintain an estimated current state derived from those observations.
 
-```text
-Observation table
-→ immutable-ish sensor history
+Source provenance records identify which sensors contributed to a track.
 
-Track table
-→ current operational state
-```
+Tracking algorithms are kept explainable and testable rather than introducing mathematical complexity solely for sophistication.
 
-This makes historical analysis possible while keeping current-state queries efficient.
-
-### WebSockets Instead of Continuous Polling
-
-New observations are pushed to connected clients immediately after persistence.
-
-This reduces unnecessary repeated REST requests and better represents a real-time system.
-
-### UTC Everywhere
-
-Sensor systems can receive data generated across different environments and locations.
-
-Internally normalizing time to UTC avoids ambiguous datetime arithmetic and makes freshness calculations deterministic.
-
-### Derived Track Status
-
-`ACTIVE`, `STALE`, and `DROPPED` are not permanently stored as authoritative database state.
-
-They are derived from:
-
-```text
-current time - last_seen
-```
-
-This prevents stale status values from remaining in the database when reports stop arriving.
-
-### Versioned Schema
-
-SQLAlchemy defines the data model while Alembic controls changes to the actual database schema.
-
-This separates:
-
-```text
-model definition
-```
-
-from:
-
-```text
-database lifecycle
-```
-
-and allows schema changes without destroying existing data.
+The result is a system that demonstrates both sensor-tracking concepts and full-stack software engineering practices.
 
 ---
 
-## Current Development Status
+## Current Status
 
-Implemented:
-
-```text
-REST ingestion               ✅
-PostgreSQL persistence       ✅
-Current track state          ✅
-Historical observations      ✅
-Pydantic validation          ✅
-Track freshness logic        ✅
-WebSocket broadcasting       ✅
-Sensor simulation            ✅
-Dynamic movement             ✅
-Sensor outages               ✅
-Track spawning               ✅
-Track termination            ✅
-React dashboard              ✅
-Leaflet map                  ✅
-Track trails                 ✅
-Historical charts            ✅
-Search and filtering         ✅
-Docker Compose               ✅
-Persistent DB volume         ✅
-Alembic migrations           ✅
-Automated tests              ✅
-Environment configuration    ✅
-```
-
----
-
-## Planned Development
-
-Future iterations may explore:
+The current version is a functional development and portfolio system with:
 
 ```text
-multi-sensor correlation
-track association
-sensor fusion
-classification and confidence
-track quality scoring
-Kalman filtering
-prediction / extrapolation
-geofencing
-event generation
-authentication / authorization
-structured logging
-metrics and observability
-PostgreSQL integration tests
-CI/CD
-cloud deployment
+Multi-sensor association        Complete
+Prediction                      Complete
+Track quality                   Complete
+Source provenance               Complete
+Source lifecycle protection     Complete
+Cross-sensor reacquisition      Complete
+State estimation                Complete
+Circular heading smoothing      Complete
+PostgreSQL persistence          Complete
+Alembic migrations              Complete
+Docker deployment               Complete
+Health/readiness monitoring     Complete
+Structured logging              Complete
+React operator dashboard        Complete
+Automated test suite            63 passing
 ```
 
-The long-term goal is to move beyond displaying individual sensor reports and explore the systems engineering problems involved in maintaining a coherent track picture from imperfect and potentially conflicting sensor data.
-
----
-
-## Purpose
-
-This project was built to combine software engineering development with practical understanding of sensor operations and tracking workflows.
-
-Rather than treating tracking as a generic CRUD problem, the system models concepts such as:
-
-```text
-observations
-current track state
-track aging
-dropout
-reacquisition
-historical trails
-sensor source
-track lifecycle
-```
-
-The intention is to continue evolving the project toward increasingly realistic tracking, correlation, and sensor-fusion problems while strengthening backend, database, distributed-system, and cloud engineering skills.
-
----
-
-## Disclaimer
-
-This is a portfolio and educational project using synthetic sensor data.
-
-It is not an operational command-and-control, aviation safety, surveillance, or weapons system.
+Further development is focused primarily on software-engineering maturity, documentation, deployment, observability, and demonstration quality rather than adding unnecessary tracking algorithm complexity.
