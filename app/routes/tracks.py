@@ -6,6 +6,7 @@ from app.database.database import get_db
 from app.models.track import Track
 from app.services.time_utils import age_seconds, ensure_utc
 from app.services.track_status import get_track_status
+from app.models.source import TrackSource
 
 router = APIRouter(
     prefix="/tracks",
@@ -106,26 +107,43 @@ def get_all_track_statuses(
 
     return results 
 
-@router.get('/{track_id}')
-def get_track(
+@router.get("/{track_id}/sources")
+def get_track_sources(
     track_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    stmt = (
-        select(Track)
-        .where(Track.track_id == track_id)
+    track = db.scalar(
+        select(Track).where(
+            Track.track_id == track_id
+        )
     )
-    
-    track = db.scalar(stmt)
-    
-    if not track:
+
+    if track is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Track: {track_id} does not exist"
+            detail="Track not found",
         )
-    
-    return track
 
+    sources = db.scalars(
+        select(TrackSource)
+        .where(
+            TrackSource.track_id == track_id
+        )
+        .order_by(
+            TrackSource.first_seen
+        )
+    ).all()
+
+    return [
+        {
+            "sensor_id": source.sensor_id,
+            "source_track_id": source.source_track_id,
+            "first_seen": source.first_seen,
+            "last_seen": source.last_seen,
+            "observation_count": source.observation_count,
+        }
+        for source in sources
+    ]
 @router.get("/{track_id}/status")
 def track_status(
     track_id: str,
@@ -151,3 +169,26 @@ def track_status(
         "status": get_track_status(last_seen),
         "last_seen": last_seen
     }
+
+@router.get('/{track_id}')
+def get_track(
+    track_id: str,
+    db: Session = Depends(get_db)
+):
+    stmt = (
+        select(Track)
+        .where(Track.track_id == track_id)
+    )
+    
+    track = db.scalar(stmt)
+    
+    if not track:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Track: {track_id} does not exist"
+        )
+    
+    return track
+
+
+    

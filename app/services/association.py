@@ -6,13 +6,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.observation import Observation
+from app.models.source import TrackSource
 from app.models.track import Track
 from app.schemas.sensor import SensorObservation
 from app.services.prediction import predict_position
 from app.services.time_utils import ensure_utc
 
 ASSOCIATION_WINDOW = timedelta(seconds=20)
-
+SOURCE_CONTINUITY_WINDOW = timedelta(
+    seconds=60
+)
 MAX_ALTITUDE_DIFFERENCE = 2000
 MAX_SPEED_DIFFERENCE = 100
 MAX_HEADING_DIFFERENCE = 60
@@ -82,36 +85,51 @@ def find_source_track(
     observation: SensorObservation,
     db: Session,
 ) -> Track | None:
-    stmt = (
-        select(Observation)
+
+    source = db.scalar(
+        select(TrackSource)
         .where(
-            Observation.sensor_id
+            TrackSource.sensor_id
             == observation.sensor_id,
-            Observation.source_track_id
+
+            TrackSource.source_track_id
             == observation.source_track_id,
         )
         .order_by(
-            Observation.timestamp.desc(),
-            Observation.id.desc(),
+            TrackSource.last_seen.desc()
         )
-        .limit(1)
     )
 
-    previous_observation = db.scalar(
-        stmt
-    )
-
-    if previous_observation is None:
+    if source is None:
         return None
 
-    return db.scalar(
-        select(Track)
-        .where(
+    observation_time = ensure_utc(
+        observation.timestamp
+    )
+
+    source_time = ensure_utc(
+        source.last_seen
+    )
+
+    time_gap = (
+        observation_time
+        - source_time
+    )
+
+    if time_gap.total_seconds() < 0:
+        return None
+
+    if time_gap > SOURCE_CONTINUITY_WINDOW:
+        return None
+
+    track = db.scalar(
+        select(Track).where(
             Track.track_id
-            == previous_observation.track_id
+            == source.track_id
         )
     )
 
+    return track
 
 def find_correlated_track(
     observation: SensorObservation,
