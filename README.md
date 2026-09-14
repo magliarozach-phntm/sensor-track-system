@@ -20,27 +20,34 @@ The project is intentionally focused on explainable tracking logic and software 
 
    ```powershell
    docker compose up -d --build
+   ```
 
 2. Start the synthetic simulator:
 
    ```powershell
    python simulator/sensor_simulator.py
+   ```
 
-3. Open http://127.0.0.1:8080
+3. Open:
+
+   ```text
+   http://127.0.0.1:8080
+   ```
 
 4. Watch for:
 
-       - system-owned SYS-* tracks being created
-       - live track movement and heading changes
-       - track quality increasing as evidence accumulates
-       - ACTIVE, STALE, and DROPPED transitions
-       - multi-sensor correlation and reacquisition
-       - historical altitude and speed charts
+   - system-owned `SYS-*` tracks being created
+   - live track movement and heading changes
+   - track quality increasing as evidence accumulates
+   - ACTIVE, STALE, and DROPPED transitions
+   - multi-sensor correlation and reacquisition
+   - historical altitude and speed charts
 
 5. View backend tracking decisions:
-   
+
    ```powershell
    docker compose logs backend -f
+   ```
 
 ## Overview
 
@@ -250,6 +257,7 @@ See [`docs/architecture.md`](docs/architecture.md) for the detailed system desig
 - Docker Compose
 - PostgreSQL persistent volumes
 - Application health/readiness checks
+- GitHub Actions CI
 
 ### Testing
 
@@ -541,6 +549,7 @@ Docker deployment               Complete
 Health/readiness monitoring     Complete
 Structured logging              Complete
 React operator dashboard        Complete
+GitHub Actions CI               Complete
 Automated test suite            63 passing
 ```
 
