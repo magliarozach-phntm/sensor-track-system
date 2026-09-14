@@ -9,6 +9,16 @@ jobs:
     name: Backend Tests
     runs-on: ubuntu-latest
 
+    env:
+      DB_USER: test_user
+      DB_PASSWORD: test_password
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: test_db
+      APP_ENV: test
+      SQL_ECHO: "false"
+      CORS_ORIGINS: '["http://localhost"]'
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
