@@ -9,6 +9,23 @@ class EstimatedState:
     heading: float
     speed: float
     
+def blend_heading(
+    previous_heading: float,
+    measurement_heading: float,
+    alpha: float,
+) -> float:
+    
+    difference = (
+        (measurement_heading - previous_heading + 180)
+        % 360
+    ) - 180
+    
+    new_heading = (
+        previous_heading + alpha * difference
+    ) % 360
+    
+    return new_heading
+
 def estimate_track_state(
     previous_state: EstimatedState,
     measurement: EstimatedState,
@@ -33,9 +50,14 @@ def estimate_track_state(
             alpha * measurement.altitude
             + (1 - alpha) * previous_state.altitude
         ),
-        heading=measurement.heading,
+        heading=blend_heading(
+            previous_heading=previous_state.heading,
+            measurement_heading=measurement.heading,
+            alpha=alpha
+        ),
         speed=(
             alpha * measurement.speed
             + (1 - alpha) * previous_state.speed
         )
     )
+    

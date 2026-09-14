@@ -65,7 +65,7 @@ def test_alpha_zero_keeps_previous_state():
     assert result.speed == pytest.approx(200)
 
     # Heading currently always trusts newest measurement.
-    assert result.heading == 120
+    assert result.heading == pytest.approx(90)
 
 
 def test_default_alpha_blends_state():
@@ -94,7 +94,7 @@ def test_default_alpha_blends_state():
     assert result.longitude == pytest.approx(-80.35)
     assert result.altitude == pytest.approx(10065)
     assert result.speed == pytest.approx(213)
-    assert result.heading == 95
+    assert result.heading == pytest.approx(93.25)
 
 
 def test_alpha_below_zero_is_invalid():
@@ -133,3 +133,106 @@ def test_alpha_above_one_is_invalid():
             measurement=measurement,
             alpha=1.1,
         )
+        
+def test_heading_blends_normally():
+    previous = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=90,
+        speed=200,
+    )
+
+    measurement = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=100,
+        speed=200,
+    )
+
+    result = estimate_track_state(
+        previous_state=previous,
+        measurement=measurement,
+        alpha=0.5,
+    )
+
+    assert result.heading == pytest.approx(95)
+
+
+def test_heading_wraps_forward_across_zero():
+    previous = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=359,
+        speed=200,
+    )
+
+    measurement = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=1,
+        speed=200,
+    )
+
+    result = estimate_track_state(
+        previous_state=previous,
+        measurement=measurement,
+        alpha=0.5,
+    )
+
+    assert result.heading == pytest.approx(0)
+
+
+def test_heading_wraps_backward_across_zero():
+    previous = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=1,
+        speed=200,
+    )
+
+    measurement = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=359,
+        speed=200,
+    )
+
+    result = estimate_track_state(
+        previous_state=previous,
+        measurement=measurement,
+        alpha=0.5,
+    )
+
+    assert result.heading == pytest.approx(0)
+
+
+def test_alpha_one_uses_measurement_heading():
+    previous = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=359,
+        speed=200,
+    )
+
+    measurement = EstimatedState(
+        latitude=34.0,
+        longitude=-81.0,
+        altitude=10000,
+        heading=1,
+        speed=200,
+    )
+
+    result = estimate_track_state(
+        previous_state=previous,
+        measurement=measurement,
+        alpha=1.0,
+    )
+
+    assert result.heading == pytest.approx(1)
