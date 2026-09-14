@@ -1,3 +1,4 @@
+import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +23,8 @@ router = APIRouter(
     tags=["observations"],
 )
 
+logger = logging.getLogger(__name__)
+
 def generate_track_id() -> str:
     return (
         f"SYS-{uuid4().hex[:12].upper()}"
@@ -30,24 +33,34 @@ def generate_track_id() -> str:
 @router.post("")
 async def create_observation(
     observation: SensorObservation,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    # Try to associate the incoming sensor report
-    # with an existing system-owned track.
+    # --------------------------------------------------
+    # 1. ASSOCIATION
+    # --------------------------------------------------
+
     association = find_correlated_track(
         observation,
-        db
+        db,
     )
+
+    # --------------------------------------------------
+    # 2. EXISTING SYSTEM TRACK
+    # --------------------------------------------------
 
     if association is not None:
         track = association.track
         system_track_id = track.track_id
+
+        # Update accumulated track quality.
         track.quality = calculate_track_quality(
             current_quality=track.quality,
             association_method=association.method,
-            association_score=association.score
+            association_score=association.score,
         )
-        
+
+        # Current system belief before applying
+        # the newest sensor measurement.
         previous_state = EstimatedState(
             latitude=track.latitude,
             longitude=track.longitude,
@@ -55,27 +68,38 @@ async def create_observation(
             heading=track.heading,
             speed=track.speed,
         )
-        
+
+        # Raw incoming sensor measurement.
         measurement = EstimatedState(
             latitude=observation.latitude,
             longitude=observation.longitude,
             altitude=observation.altitude,
             heading=observation.heading,
-            speed=observation.speed
+            speed=observation.speed,
         )
-        
+
+        # Blend the existing system state with
+        # the incoming sensor measurement.
         estimated_state = estimate_track_state(
             previous_state=previous_state,
-            measurement=measurement
+            measurement=measurement,
         )
-        
+
+        # Latest contributing sensor.
         track.sensor_id = observation.sensor_id
-        track.latitude = observation.latitude
-        track.longitude = observation.longitude
-        track.altitude = observation.altitude
-        track.heading = observation.heading
-        track.speed = observation.speed
+
+        # Estimated system state.
+        track.latitude = estimated_state.latitude
+        track.longitude = estimated_state.longitude
+        track.altitude = estimated_state.altitude
+        track.heading = estimated_state.heading
+        track.speed = estimated_state.speed
+
         track.last_seen = observation.timestamp
+
+    # --------------------------------------------------
+    # 3. NEW SYSTEM TRACK
+    # --------------------------------------------------
 
     else:
         system_track_id = generate_track_id()
@@ -93,26 +117,43 @@ async def create_observation(
         )
 
         db.add(track)
+
+        # IMPORTANT:
+        # TrackSource has a foreign key to tracks.track_id.
+        # Flush ensures PostgreSQL receives the parent Track
+        # INSERT before we create its TrackSource row.
+        #
+        # This is NOT a commit.
         db.flush()
 
+    # --------------------------------------------------
+    # 4. ASSOCIATION METADATA
+    # --------------------------------------------------
 
-    # Association metadata
     if association is not None:
         association_method = association.method
         association_score = association.score
         confidence = association.confidence
+
     else:
         association_method = "NEW_TRACK"
         association_score = None
         confidence = None
 
-    # Preserve both identities:
-    # source_track_id = sensor identity
-    # track_id        = system identity
+    # --------------------------------------------------
+    # 5. PRESERVE RAW SENSOR OBSERVATION
+    # --------------------------------------------------
+
     db_observation = Observation(
         sensor_id=observation.sensor_id,
+
+        # Identity assigned by the sensor.
         source_track_id=observation.source_track_id,
+
+        # Identity owned by this tracking system.
         track_id=system_track_id,
+
+        # Preserve RAW measurement values here.
         latitude=observation.latitude,
         longitude=observation.longitude,
         altitude=observation.altitude,
@@ -123,6 +164,10 @@ async def create_observation(
 
     db.add(db_observation)
 
+    # --------------------------------------------------
+    # 6. RECORD SENSOR/SOURCE PROVENANCE
+    # --------------------------------------------------
+
     record_track_source(
         db=db,
         track_id=system_track_id,
@@ -130,24 +175,101 @@ async def create_observation(
         source_track_id=observation.source_track_id,
         timestamp=observation.timestamp,
     )
-    
-    db.commit()
+
+    # --------------------------------------------------
+    # 7. COMMIT TRANSACTION
+    # --------------------------------------------------
+
+    try:
+        db.commit()
+
+    except Exception:
+        db.rollback()
+
+        logger.exception(
+            "event=OBSERVATION_COMMIT_FAILED "
+            "track_id=%s "
+            "sensor_id=%s "
+            "source_track_id=%s",
+            system_track_id,
+            observation.sensor_id,
+            observation.source_track_id,
+        )
+
+        raise
 
     db.refresh(db_observation)
     db.refresh(track)
 
+    # --------------------------------------------------
+    # 8. STRUCTURED APPLICATION LOGGING
+    # --------------------------------------------------
+
+    if association_method == "NEW_TRACK":
+        logger.info(
+            "event=TRACK_CREATED "
+            "track_id=%s "
+            "sensor_id=%s "
+            "source_track_id=%s "
+            "quality=%.2f",
+            track.track_id,
+            observation.sensor_id,
+            observation.source_track_id,
+            track.quality,
+        )
+
+    elif association_method == "SOURCE_CONTINUITY":
+        logger.info(
+            "event=SOURCE_CONTINUITY "
+            "track_id=%s "
+            "sensor_id=%s "
+            "source_track_id=%s "
+            "quality=%.2f",
+            track.track_id,
+            observation.sensor_id,
+            observation.source_track_id,
+            track.quality,
+        )
+
+    elif association_method == "CORRELATION":
+        logger.info(
+            "event=TRACK_CORRELATED "
+            "track_id=%s "
+            "sensor_id=%s "
+            "source_track_id=%s "
+            "score=%.3f "
+            "confidence=%s "
+            "quality=%.2f",
+            track.track_id,
+            observation.sensor_id,
+            observation.source_track_id,
+            association_score,
+            confidence,
+            track.quality,
+        )
+
+    # --------------------------------------------------
+    # 9. TRACK STATUS
+    # --------------------------------------------------
+
     status = get_track_status(
-        track.last_seen
+        track.last_seen,
     )
+
+    # --------------------------------------------------
+    # 10. REAL-TIME WEBSOCKET UPDATE
+    # --------------------------------------------------
 
     await manager.broadcast({
         "event": "track_updated",
         "observation_id": db_observation.id,
-        
+
         "track_id": track.track_id,
         "source_track_id": observation.source_track_id,
         "sensor_id": track.sensor_id,
+
         "quality": track.quality,
+
         "latitude": track.latitude,
         "longitude": track.longitude,
         "altitude": track.altitude,
@@ -159,9 +281,13 @@ async def create_observation(
 
         "association_method": association_method,
         "association_score": association_score,
-        "association_confidence": confidence
+        "association_confidence": confidence,
     })
-    
+
+    # --------------------------------------------------
+    # 11. API RESPONSE
+    # --------------------------------------------------
+
     return {
         "message": (
             "Observation stored and "
@@ -173,7 +299,7 @@ async def create_observation(
         "source_track_id": observation.source_track_id,
         "association_method": association_method,
         "association_score": association_score,
-        "association_confidence": confidence
+        "association_confidence": confidence,
     }
 
 
