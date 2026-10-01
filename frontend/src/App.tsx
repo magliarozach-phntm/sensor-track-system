@@ -10,6 +10,7 @@ import TrackControls from "./components/TrackControls";
 import TrackMap from "./components/TrackMap";
 import TrackPanel from "./components/TrackPanel";
 import TrackSearch from "./components/TrackSearch";
+import DemoControl from "./components/DemoControl";
 import type { TrackUpdate } from "./types/trackUpdate";
 
 import { useTrackSocket } from "./hooks/useTrackSocket";
@@ -345,6 +346,8 @@ function handleSearchTrackSelect(track: Track) {
 
       </header>
 
+
+      <DemoControl />
 
       {error && (
         <div className="error-banner">

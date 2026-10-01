@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -10,12 +11,17 @@ from app.routes.health import router as health_router
 from app.routes.observations import router as observations_router
 from app.routes.tracks import router as tracks_router
 from app.routes.websocket import router as websocket_router
+from app.routes.demo import router as demo_router, stop_demos
 
 configure_logging()
 
-app = FastAPI(
-    title=settings.app_name
-)
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    await stop_demos()
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 
 app.add_middleware(
@@ -31,6 +37,7 @@ app.include_router(observations_router)
 app.include_router(tracks_router)
 app.include_router(websocket_router)
 app.include_router(health_router)
+app.include_router(demo_router)
 
 # The deployment image includes the existing React dashboard.
 # Local API-only development continues to work without a frontend build.

@@ -40,6 +40,23 @@ the `X-Sensor-Key` header. Production ingestion fails closed if no key is set.
 
 ## Run a demonstration
 
+Visitors can click **Run 60-second demo** on `/dashboard/`. One shared simulator
+runs inside the existing app service, posts to its loopback API, and stops after
+at most 60 seconds. The ingestion key stays on the server.
+
+The button is limited to three tracks, 30 cycles (at most 90 observations per
+run), a five-minute cooldown after the run, and 12 starts per UTC day shared
+across all visitors. PostgreSQL stores and locks the limit record, so concurrent
+requests and app restarts cannot reset the budget. Failed starts also consume a
+slot. A restart stops the current demo; the next attempt follows the saved
+cooldown. These limits apply to the public button, not authenticated ingestion.
+
+The simulator runs only when requested. There is no extra Railway service or
+continuous polling when the dashboard is closed. Existing synthetic history is
+retained; at maximum public usage, up to 1,080 observations are added per day.
+
+### Owner-operated simulator
+
 Run the simulator locally, using the dependencies in `requirements.txt`. Put
 `SENSOR_API_URL=https://your-service.up.railway.app` and the private
 `SENSOR_API_KEY` in your untracked `.env` file. Open `/dashboard/`, then run:
