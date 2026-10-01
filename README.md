@@ -18,7 +18,7 @@ The project is intentionally focused on explainable tracking logic and software 
 
 ## Live Demo
 
-sensor-track-system-production.up.railway.app
+https://sensor-track-system-production.up.railway.app/dashboard/
 
 ## Quick Local Demo
 
