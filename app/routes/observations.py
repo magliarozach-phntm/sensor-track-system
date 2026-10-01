@@ -17,6 +17,7 @@ from app.services.track_quality import calculate_track_quality
 from app.services.track_sources import record_track_source
 from app.services.track_status import get_track_status
 from app.services.web_socket_manager import manager
+from app.services.ingest_auth import require_sensor_key
 
 router = APIRouter(
     prefix="/observations",
@@ -30,7 +31,7 @@ def generate_track_id() -> str:
         f"SYS-{uuid4().hex[:12].upper()}"
     )
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_sensor_key)])
 async def create_observation(
     observation: SensorObservation,
     db: Session = Depends(get_db),

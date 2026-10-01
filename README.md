@@ -311,6 +311,8 @@ sensor_track_system/
 
 ## Running the Application
 
+For the low-resource hosted portfolio setup, see [Railway demo deployment](docs/railway-demo.md).
+
 Create your local environment file from the provided example:
 
 ```powershell

@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -28,6 +31,12 @@ app.include_router(observations_router)
 app.include_router(tracks_router)
 app.include_router(websocket_router)
 app.include_router(health_router)
+
+# The deployment image includes the existing React dashboard.
+# Local API-only development continues to work without a frontend build.
+dashboard_dir = Path(__file__).resolve().parent.parent / "dashboard"
+if dashboard_dir.is_dir():
+    app.mount("/dashboard", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")
 
 @app.get("/")
 def root():

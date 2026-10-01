@@ -1,3 +1,4 @@
+import argparse
 import math
 import os
 import random
@@ -140,70 +141,81 @@ def terminate_track(track_id):
     
     
     
-while True:
+def run(cycles: int = 0):
+    completed = 0
+    while cycles == 0 or completed < cycles:
 
-    if random.random() < 0.01:
-        spawn_track()
+        if random.random() < 0.01:
+            spawn_track()
 
-    for track_id, track in list(tracks.items()):
+        for track_id, track in list(tracks.items()):
 
-        update_track(track)
+            update_track(track)
 
-        if len(tracks) > 3 and random.random() < 0.005:
-            terminate_track(track_id)
-            continue
-
-        # Track currently in an outage
-        if track_id in outages:
-            if time.time() < outages[track_id]:
-                print(f"{track_id} SENSOR OUTAGE")
+            if len(tracks) > 3 and random.random() < 0.005:
+                terminate_track(track_id)
                 continue
-            else:
-                del outages[track_id]
-                print(f"{track_id} REACQUIRED")
 
-        # Small chance of starting a 12–20 second outage
-        if random.random() < 0.02:
-            outage_length = random.randint(12, 20)
+            # Track currently in an outage
+            if track_id in outages:
+                if time.time() < outages[track_id]:
+                    print(f"{track_id} SENSOR OUTAGE")
+                    continue
+                else:
+                    del outages[track_id]
+                    print(f"{track_id} REACQUIRED")
 
-            outages[track_id] = (
-                time.time() + outage_length
+            # Small chance of starting a 12–20 second outage
+            if random.random() < 0.02:
+                outage_length = random.randint(12, 20)
+
+                outages[track_id] = (
+                    time.time() + outage_length
+                )
+
+                print(
+                    f"{track_id} LOST - "
+                    f"{outage_length}s outage"
+                )
+
+                continue
+
+            # Normal single-report dropout
+            if random.random() < 0.05:
+                print(
+                    f"{track_id} observation dropped"
+                )
+                continue
+
+            observation = create_observation(
+                track_id,
+                track
             )
+
+            response = requests.post(
+                OBSERVATION_URL,
+                json=observation,
+                headers={"X-Sensor-Key": os.getenv("SENSOR_API_KEY", "")},
+                timeout=5
+            )
+            response.raise_for_status()
 
             print(
-                f"{track_id} LOST - "
-                f"{outage_length}s outage"
+                track_id,
+                response.status_code,
+                observation["latitude"],
+                observation["longitude"]
             )
 
-            continue
-
-        # Normal single-report dropout
-        if random.random() < 0.05:
-            print(
-                f"{track_id} observation dropped"
-            )
-            continue
-
-        observation = create_observation(
-            track_id,
-            track
-        )
-
-        response = requests.post(
-            OBSERVATION_URL,
-            json=observation,
-            timeout=5
-        )
-
-        print(
-            track_id,
-            response.status_code,
-            observation["latitude"],
-            observation["longitude"]
-        )
-
-    time.sleep(2)
+        completed += 1
+        if cycles == 0 or completed < cycles:
+            time.sleep(2)
 
 
-
-    
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run synthetic sensor reports")
+    parser.add_argument("--cycles", type=int, default=0, help="Stop after this many cycles; 0 runs until interrupted")
+    args = parser.parse_args()
+    if args.cycles < 0:
+        parser.error("--cycles must be nonnegative")
+    run(args.cycles)
