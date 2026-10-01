@@ -141,11 +141,11 @@ def terminate_track(track_id):
     
     
     
-def run(cycles: int = 0):
+def run(cycles: int = 0, max_tracks: int = 0):
     completed = 0
     while cycles == 0 or completed < cycles:
 
-        if random.random() < 0.01:
+        if (max_tracks == 0 or len(tracks) < max_tracks) and random.random() < 0.01:
             spawn_track()
 
         for track_id, track in list(tracks.items()):
@@ -215,7 +215,10 @@ def run(cycles: int = 0):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run synthetic sensor reports")
     parser.add_argument("--cycles", type=int, default=0, help="Stop after this many cycles; 0 runs until interrupted")
+    parser.add_argument("--max-tracks", type=int, default=0, help="Limit track spawning; 0 keeps the original behavior")
     args = parser.parse_args()
     if args.cycles < 0:
         parser.error("--cycles must be nonnegative")
-    run(args.cycles)
+    if args.max_tracks and args.max_tracks < 3:
+        parser.error("--max-tracks must be 0 or at least 3")
+    run(args.cycles, args.max_tracks)

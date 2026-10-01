@@ -547,3 +547,27 @@
 .map-actions .track-search {
   margin-bottom: 0;
 }
+
+.demo-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border: 1px solid #294456;
+  border-radius: 6px;
+  background: #0d1d28;
+  color: #c9dae5;
+  font-size: 13px;
+}
+.demo-controls button {
+  padding: 10px 14px;
+  border: 1px solid #4f91ad;
+  border-radius: 4px;
+  background: #17435a;
+  color: #f2f9fc;
+  cursor: pointer;
+}
+.demo-controls button:disabled { opacity: 0.6; cursor: default; }
+.demo-controls small { color: #94aebf; }
