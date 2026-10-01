@@ -16,7 +16,11 @@ The project is intentionally focused on explainable tracking logic and software 
 
 <img width="1890" height="877" alt="image" src="https://github.com/user-attachments/assets/a5d15e4d-d566-47a4-8b6f-c23eac63b07c" />
 
-## Quick Demo
+## Live Demo
+
+sensor-track-system-production.up.railway.app
+
+## Quick Local Demo
 
 1. Start the application:
 
