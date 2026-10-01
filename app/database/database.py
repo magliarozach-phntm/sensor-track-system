@@ -14,7 +14,14 @@ database_url = URL.create(
     database=settings.db_name
 )
 
-engine = create_engine(database_url, echo=settings.sql_echo)
+engine = create_engine(
+    database_url,
+    echo=settings.sql_echo,
+    pool_pre_ping=True,
+    pool_size=2,
+    max_overflow=1,
+    connect_args={"connect_timeout": 5},
+)
 
 SessionLocal = sessionmaker(
     bind=engine,

@@ -5,5 +5,8 @@
 __pycache__
 *.pyc
 
-frontend
-simulator
+**/node_modules
+**/dist
+**/.env*
+**/__pycache__
+.pytest_cache

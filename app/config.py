@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "Sensor Track System"
     app_env: str = "development"
+    sensor_api_key: str = ""
 
     # Database
     db_user: str
